@@ -29,7 +29,7 @@ from pathlib import Path
 DATA_FILE = Path(__file__).parent / "data" / "fridge.json"
 
 # 수량 단위 선택지
-UNITS = ["개", "g", "kg", "ml", "L", "팩", "봉지", "병", "캔"]
+UNITS = ["개", "g", "kg", "ml", "L", "팩", "봉지", "병", "캔", "단", "통", "모", "송이", "장"]
 
 # 재료 상태: 냉장고에 있음 / 다 씀
 # "다 씀" 재료는 지우지 않고 남겨 두었다가, 나중에 장보기 리스트에 추가할 때 쓴다.
@@ -111,15 +111,24 @@ def _find(items, item_id):
     return next((item for item in items if item["id"] == item_id), None)
 
 
-def find_in_fridge_by_name(items, name, exclude_id=None):
-    """냉장고에 있는 재료 중 이름이 같은(띄어쓰기·대소문자 무시) 재료를 찾는다."""
+def find_all_by_name(items, name, exclude_id=None):
+    """냉장고에 있는 재료 중 이름이 같은(띄어쓰기·대소문자 무시) 재료를 모두 찾는다.
+
+    단위가 다르면 따로 줄을 만들 수 있으므로 여러 개일 수 있다. (예: 우유 팩, 우유 ml)
+    """
     key = normalize_name(name)
-    for item in items:
-        if (
-            item["status"] == STATUS_IN_FRIDGE
-            and item["id"] != exclude_id
-            and normalize_name(item["name"]) == key
-        ):
+    return [
+        item for item in items
+        if item["status"] == STATUS_IN_FRIDGE
+        and item["id"] != exclude_id
+        and normalize_name(item["name"]) == key
+    ]
+
+
+def find_in_fridge_by_name(items, name, unit=None, exclude_id=None):
+    """이름이 같은 재료 하나를 찾는다. unit을 주면 단위까지 같은 재료만 찾는다. 없으면 None."""
+    for item in find_all_by_name(items, name, exclude_id):
+        if unit is None or item["unit"] == unit:
             return item
     return None
 
@@ -193,26 +202,34 @@ def format_expiry(expiry_str):
 # 재료 추가 / 사용 / 다 씀
 # 각 함수는 (성공 여부, 안내 메시지)를 돌려준다. 화면은 이 메시지를 그대로 보여 준다.
 # ---------------------------------------------------------------
-def add_item(items, name, expiry, quantity, unit, classification=None):
-    """재료를 추가한다. 같은 이름이 이미 있으면 그 줄에 합친다.
+def add_item(items, name, expiry, quantity, unit, classification=None, allow_new_unit=False):
+    """재료를 추가한다. 이름과 단위가 같은 재료가 있으면 그 줄에 합친다.
 
     expiry: date 객체, 기한 없음이면 None
-    classification: 새 재료일 때 쓸 분류 결과 {"category", "storage", "tip"}
-                    (이미 있는 재료에 합칠 때는 기존 분류를 그대로 둔다)
+    classification: 분류 결과 {"category", "storage", "tip"}
+                    (기존 줄에 합칠 때 주면 기존 줄의 분류도 이 값으로 바뀐다)
+    allow_new_unit: 같은 이름이 다른 단위로만 있을 때, 사용자가 확인했으면 True → 새 줄로 추가
     """
     expiry_str = expiry.isoformat() if expiry else None
-    existing = find_in_fridge_by_name(items, name)
+    same_unit = find_in_fridge_by_name(items, name, unit=unit)
 
-    if existing:
-        # 같은 이름인데 단위가 다르면 합계가 틀려지므로 거절하고 안내한다.
-        if existing["unit"] != unit:
-            return False, (
-                f"'{existing['name']}'은(는) 이미 '{existing['unit']}' 단위로 있어요. "
-                f"단위를 '{existing['unit']}'(으)로 맞춰 주세요."
-            )
-        _add_to_batches(existing, expiry_str, quantity)
+    if same_unit:
+        # 이름·단위가 같으면 기존 줄에 합친다.
+        _add_to_batches(same_unit, expiry_str, quantity)
+        if classification:
+            same_unit["category"] = classification["category"]
+            same_unit["storage"] = classification["storage"]
+            same_unit["tip"] = classification.get("tip", "")
         save_items(items)
-        return True, f"'{existing['name']}'에 {format_quantity(quantity, unit)}을(를) 더했어요."
+        return True, f"'{same_unit['name']}'에 {format_quantity(quantity, unit)}을(를) 더했어요."
+
+    other_units = [item["unit"] for item in find_all_by_name(items, name)]
+    if other_units and not allow_new_unit:
+        # 같은 이름이 다른 단위로만 있으면 합칠 수 없다. 사용자 확인 없이는 추가하지 않는다.
+        return False, (
+            f"'{name}'은(는) 이미 '{', '.join(other_units)}' 단위로 있어요. "
+            "단위가 달라서 따로 추가돼요."
+        )
 
     items.append(
         {
@@ -275,9 +292,9 @@ def mark_used(items, item_id):
 def update_item(items, item_id, new_name, new_unit, category, storage, tip):
     """재료의 이름·단위·분류(종류, 보관 방법, 팁)를 수정한다."""
     item = _find(items, item_id)
-    # 바꾼 이름이 다른 재료와 겹치면 두 줄이 같은 이름이 되므로 막는다.
-    if find_in_fridge_by_name(items, new_name, exclude_id=item_id):
-        return False, f"'{new_name}'은(는) 이미 냉장고에 있어요. 다른 이름을 써 주세요."
+    # 이름·단위가 둘 다 같은 줄이 생기면 어느 줄에 합쳐야 할지 모호해지므로 막는다.
+    if find_in_fridge_by_name(items, new_name, unit=new_unit, exclude_id=item_id):
+        return False, f"'{new_name}'은(는) 이미 '{new_unit}' 단위로 냉장고에 있어요. 이름이나 단위를 바꿔 주세요."
     item["name"] = new_name
     item["unit"] = new_unit
     item["category"] = category

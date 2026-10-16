@@ -103,47 +103,170 @@ if "flash" in st.session_state:
 
 
 # ---------------------------------------------------------------
-# 1) 재료 추가 폼
-# st.form을 쓰면 "추가" 버튼을 누를 때 한 번에 제출된다.
-# (입력칸을 하나 바꿀 때마다 화면이 새로 그려지는 것을 막아 준다)
+# 1) 재료 추가
+# 이름을 입력하고 Enter를 누르거나 다른 칸을 누르면(on_change) 바로 분류해서
+# 종류·보관 방법·추천 단위를 채워 준다. 사용자는 "추가"를 누르기 전에 바꿀 수 있다.
+#
+# 입력칸 값은 key 이름으로 st.session_state에 들어 있다. (예: st.session_state.add_name)
+# 콜백 함수에서 이 값을 바꾸면 화면의 입력칸 값도 바뀐다.
 # ---------------------------------------------------------------
-with st.form("add_item_form", clear_on_submit=True):
+ADD_DEFAULTS = {
+    "add_name": "",
+    "add_expiry": date.today(),
+    "add_no_expiry": False,
+    "add_quantity": 1.0,
+    "add_category": classifier.DEFAULT_CATEGORY,
+    "add_storage": classifier.DEFAULT_STORAGE,
+    "add_unit": classifier.DEFAULT_UNIT,
+    "add_tip": "",
+    "add_suggested": None,  # 자동 분류가 추천한 값 (사용자가 바꿨는지 비교용)
+    "add_existing": None,   # 같은 이름이 이미 있으면 {"name": 이름, "units": [단위들]}
+    "add_confirm": None,    # 단위가 달라서 확인을 기다리는 중이면 안내 문구
+}
+for key, value in ADD_DEFAULTS.items():
+    st.session_state.setdefault(key, value)
+
+
+def reset_add_inputs():
+    """추가가 끝나면 입력칸을 처음 상태로 되돌린다."""
+    for key, value in ADD_DEFAULTS.items():
+        st.session_state[key] = value
+
+
+def on_name_change():
+    """이름 칸이 바뀌었을 때: 분류하고 추천 값을 입력칸에 채운다."""
+    state = st.session_state
+    name = state.add_name.strip()
+    state.add_confirm = None  # 이름이 바뀌면 이전 확인 창은 닫는다.
+    if not name:
+        reset_add_inputs()
+        return
+
+    same_name = store.find_all_by_name(items, name)
+    if same_name:
+        # 이미 있는 재료면 기존 기록(첫 번째 줄)의 분류·단위를 그대로 채운다. 바꾸는 건 자유.
+        first = same_name[0]
+        values = {
+            "category": first["category"], "storage": first["storage"],
+            "unit": first["unit"], "tip": first.get("tip", ""),
+        }
+        state.add_existing = {"name": first["name"], "units": [item["unit"] for item in same_name]}
+        state.add_suggested = None
+    else:
+        with st.spinner(f"'{name}' 분류 중..."):
+            values = classifier.classify(name)
+        state.add_existing = None
+        state.add_suggested = values
+
+    state.add_category = values["category"]
+    state.add_storage = values["storage"]
+    state.add_unit = values["unit"]
+    state.add_tip = values["tip"]
+
+
+def on_unit_change():
+    """단위를 바꾸면 이전 확인 창은 닫는다. (다시 '추가'를 누를 때 새로 확인)"""
+    st.session_state.add_confirm = None
+
+
+def with_gwa(word):
+    """이름 뒤에 '과' 또는 '와'를 붙인다. 마지막 글자에 받침이 있으면 '과', 없으면 '와'.
+
+    예: '우유' → "'우유'와", '대파' → "'대파'와", '양배추' → "'양배추'와", '연근' → "'연근'과"
+    한글 글자는 (코드값 - 0xAC00) % 28 이 0이 아니면 받침이 있다.
+    """
+    last = word[-1]
+    if "가" <= last <= "힣" and (ord(last) - 0xAC00) % 28 != 0:
+        return f"'{word}'과"
+    return f"'{word}'와"
+
+
+def cancel_confirm():
+    st.session_state.add_confirm = None
+
+
+def on_add_click(confirmed=False):
+    """'추가' 버튼: 입력한 값으로 재료를 추가한다.
+
+    confirmed: 단위가 달라 따로 추가된다는 확인 창에서 '이대로 추가'를 눌렀으면 True
+    """
+    state = st.session_state
+    name = state.add_name.strip()
+    if not name:
+        state.flash = (False, "재료 이름을 입력해 주세요.")
+        return
+
+    # 이름을 입력하고 Enter 없이 바로 '추가'를 누른 경우에도 분류가 되도록 한 번 더 확인한다.
+    if state.add_suggested is None and state.add_existing is None:
+        on_name_change()
+
+    # 같은 이름이 있는데 고른 단위가 기존 단위와 다르면, 바로 추가하지 않고 먼저 확인을 받는다.
+    existing = state.add_existing
+    if existing and state.add_unit not in existing["units"] and not confirmed:
+        state.add_confirm = f"냉장고에 있는 {with_gwa(existing['name'])} 단위가 달라요. 이대로 추가할까요?"
+        return
+
+    classification = {"category": state.add_category, "storage": state.add_storage, "tip": state.add_tip}
+    expiry = None if state.add_no_expiry else state.add_expiry
+    ok, message = store.add_item(
+        items, name, expiry, state.add_quantity, state.add_unit, classification,
+        allow_new_unit=confirmed,
+    )
+
+    if ok:
+        suggested = state.add_suggested
+        # 추천과 다르게 고쳤으면 기억해 두고, 다음에 같은 이름을 넣을 때 그 값을 추천한다.
+        if suggested and (state.add_category, state.add_storage, state.add_unit) != (
+            suggested["category"], suggested["storage"], suggested["unit"]
+        ):
+            classifier.remember(name, state.add_category, state.add_storage, state.add_unit, state.add_tip)
+        elif suggested and suggested["source"] == "default":
+            message += " (자동 분류에 실패해서 기본값으로 넣었어요. '수정'에서 바꿀 수 있어요.)"
+        reset_add_inputs()
+    state.flash = (ok, message)
+
+
+with st.container(border=True):
     st.subheader("재료 추가")
-    name = st.text_input("이름", placeholder="예: 우유")
+    st.text_input(
+        "이름", key="add_name", on_change=on_name_change,
+        placeholder="예: 우유 (입력 후 Enter를 누르면 자동 분류)",
+    )
+
+    # 이미 있는 재료여도 따로 안내하지 않는다. (단위가 다를 때만 '추가'를 누르면 확인 창이 뜬다)
+    if st.session_state.add_suggested and st.session_state.add_suggested["source"] == "default":
+        st.caption("⚠️ 자동 분류에 실패했어요. 종류와 보관 방법을 직접 골라 주세요.")
+
+    col_cat, col_storage = st.columns(2)
+    col_cat.selectbox("종류", classifier.CATEGORIES, key="add_category")
+    col_storage.selectbox("보관 방법", classifier.STORAGES, key="add_storage")
+    if st.session_state.add_tip:
+        st.caption(f"💡 {st.session_state.add_tip}")
 
     col_date, col_none = st.columns([2, 1])
-    with col_date:
-        expiry = st.date_input("유통기한", value=date.today())
     with col_none:
         st.write("")  # 체크박스를 날짜 칸 높이에 맞추기 위한 빈 줄
-        no_expiry = st.checkbox("기한 없음", help="소금·간장처럼 기한이 없거나 모를 때 체크하세요.")
+        no_expiry = st.checkbox(
+            "기한 없음", key="add_no_expiry", help="소금·간장처럼 기한이 없거나 모를 때 체크하세요."
+        )
+    with col_date:
+        # "기한 없음"을 체크하면 날짜 칸을 비활성화한다.
+        st.date_input("유통기한", key="add_expiry", disabled=no_expiry)
 
     # 수량과 단위를 한 줄에 나란히 배치
     col_qty, col_unit = st.columns([2, 1])
-    with col_qty:
-        quantity = st.number_input("수량", min_value=0.1, value=1.0, step=1.0, format="%g")
-    with col_unit:
-        unit = st.selectbox("단위", store.UNITS)
+    col_qty.number_input("수량", min_value=0.1, step=1.0, format="%g", key="add_quantity")
+    col_unit.selectbox("단위", store.UNITS, key="add_unit", on_change=on_unit_change)
 
-    submitted = st.form_submit_button("추가")
+    st.button("추가", type="primary", on_click=on_add_click)
 
-if submitted:
-    name = name.strip()  # 앞뒤 공백 제거
-    if not name:
-        st.warning("재료 이름을 입력해 주세요.")
-    else:
-        classification = None
-        note = ""
-        # 이미 있는 재료에 합칠 때는 분류가 필요 없다. 새 재료일 때만 분류한다.
-        if not store.find_in_fridge_by_name(items, name):
-            with st.spinner(f"'{name}' 분류 중..."):
-                classification = classifier.classify(name)
-            if classification["source"] == "default":
-                note = " (자동 분류에 실패해서 '기타'로 넣었어요. '수정'에서 바꿀 수 있어요.)"
-        ok, message = store.add_item(
-            items, name, None if no_expiry else expiry, quantity, unit, classification
-        )
-        finish((ok, message + note if ok else message))
+    # 단위가 달라 따로 추가되는 경우의 확인 창
+    if st.session_state.add_confirm:
+        st.warning(st.session_state.add_confirm)
+        st.caption("단위가 다르면 따로 추가돼요.")
+        col_ok, col_cancel = st.columns(2)
+        col_ok.button("이대로 추가", on_click=on_add_click, kwargs={"confirmed": True})
+        col_cancel.button("취소", key="cancel_add_confirm", on_click=cancel_confirm)
 
 
 # ---------------------------------------------------------------
@@ -202,7 +325,7 @@ def render_edit_item_panel(item):
             )
             # 분류를 직접 고쳤으면 기억해 두고, 다음에 같은 이름을 넣을 때 그대로 쓴다.
             if result[0] and changed:
-                classifier.remember(new_name, new_category, new_storage, new_tip)
+                classifier.remember(new_name, new_category, new_storage, new_unit, new_tip)
             finish(result)
     if cancel:
         close_action()
