@@ -59,6 +59,43 @@ def finish(result):
     st.rerun()
 
 
+# ---------------------------------------------------------------
+# 유통기한 배지
+# 상태마다 색과 아이콘을 정해 두고, Streamlit의 배지 문법 :색-badge[글자]로 표시한다.
+# ---------------------------------------------------------------
+STATUS_STYLE = {
+    store.STATUS_EXPIRED: ("red", "🔴", "기한 지남"),
+    store.STATUS_SOON: ("orange", "🟠", f"{store.SOON_DAYS}일 이내"),
+    store.STATUS_OK: ("green", "🟢", "여유"),
+    store.STATUS_NO_EXPIRY: ("gray", "⚪", "기한 없음"),
+}
+
+
+def expiry_badge(expiry_str):
+    """유통기한 상태에 맞는 색깔 D-day 배지 (마크다운 글자)"""
+    color, icon, _ = STATUS_STYLE[store.expiry_status(expiry_str)]
+    return f":{color}-badge[{icon} {store.d_day_label(expiry_str)}]"
+
+
+def render_expiry_summary():
+    """화면 맨 위의 유통기한 요약: 상태별 재료 개수와 이름"""
+    groups = store.expiry_summary(items)
+    columns = st.columns(3)
+    for col, status in zip(columns, [store.STATUS_EXPIRED, store.STATUS_SOON, store.STATUS_OK]):
+        _, icon, title = STATUS_STYLE[status]
+        group = groups[status]
+        with col.container(border=True):
+            st.metric(f"{icon} {title}", f"{len(group)}개")
+            # 이름이 많으면 길어지므로 앞의 5개만 보여 주고 나머지는 "외 N개"로 줄인다.
+            names = [item["name"] for item in group]
+            shown = ", ".join(names[:5]) + (f" 외 {len(names) - 5}개" if len(names) > 5 else "")
+            st.caption(shown or "없음")
+    if groups[store.STATUS_NO_EXPIRY]:
+        st.caption(f"⚪ 기한 없음 {len(groups[store.STATUS_NO_EXPIRY])}개는 요약에서 뺐어요.")
+
+
+render_expiry_summary()
+
 # 직전 작업의 결과 메시지 표시 (한 번 보여 주고 지운다)
 if "flash" in st.session_state:
     ok, message = st.session_state.pop("flash")
@@ -226,7 +263,7 @@ def render_batches(item):
             st.caption(f"💡 {item['tip']}")
         for batch in store.sorted_batches(item):
             col_date, col_qty, col_edit, col_del = st.columns([2, 2, 1, 1])
-            col_date.write(store.format_expiry(batch["expiry"]))
+            col_date.markdown(f"{store.format_expiry(batch['expiry'])} {expiry_badge(batch['expiry'])}")
             col_qty.write(store.format_quantity(batch["quantity"], item["unit"]))
             col_edit.button(
                 "수정", key=f"edit_batch_{batch['id']}",
@@ -280,7 +317,8 @@ for item in filtered:
         )
         col_name.markdown(f"**{item['name']}**")
         col_name.caption(f"{item['category']} · {item['storage']}")
-        col_summary.write(
+        col_summary.markdown(
+            f"{expiry_badge(first['expiry'])}  \n"  # 배지 다음 줄에 수량·기한 표시
             f"총 {store.format_quantity(store.total_quantity(item), unit)} · "
             f"{store.format_expiry(first['expiry'])} "
             f"({store.format_quantity(first['quantity'], unit)})"

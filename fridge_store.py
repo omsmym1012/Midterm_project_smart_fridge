@@ -320,3 +320,58 @@ def delete_batch(items, item_id, batch_id):
         return delete_item(items, item_id)
     save_items(items)
     return True, "묶음을 삭제했어요."
+
+
+# ---------------------------------------------------------------
+# 유통기한 알림 (기한 지남 / 3일 이내 / 여유 / 기한 없음)
+# ---------------------------------------------------------------
+SOON_DAYS = 3  # 오늘부터 며칠 뒤까지를 "임박"으로 볼지
+
+STATUS_EXPIRED = "expired"  # 기한 지남
+STATUS_SOON = "soon"        # 오늘 ~ 3일 뒤
+STATUS_OK = "ok"            # 여유
+STATUS_NO_EXPIRY = "none"   # 기한 없음
+
+
+def days_left(expiry_str, today=None):
+    """기한까지 남은 날 수. 오늘이 기한이면 0, 어제였으면 -1. 기한 없음이면 None."""
+    if expiry_str is None:
+        return None
+    today = today or date.today()
+    return (date.fromisoformat(expiry_str) - today).days
+
+
+def expiry_status(expiry_str, today=None):
+    """유통기한 상태를 4가지 중 하나로 알려 준다."""
+    days = days_left(expiry_str, today)
+    if days is None:
+        return STATUS_NO_EXPIRY
+    if days < 0:
+        return STATUS_EXPIRED
+    if days <= SOON_DAYS:
+        return STATUS_SOON
+    return STATUS_OK
+
+
+def d_day_label(expiry_str, today=None):
+    """D-day 글자. 예: "D-3", "D-day", "D+2 지남", "기한 없음" """
+    days = days_left(expiry_str, today)
+    if days is None:
+        return "기한 없음"
+    if days < 0:
+        return f"D+{-days} 지남"
+    if days == 0:
+        return "D-day"
+    return f"D-{days}"
+
+
+def expiry_summary(items, today=None):
+    """냉장고 재료를 상태별로 나눈다. 재료마다 가장 빠른 기한을 기준으로 한다.
+
+    반환 예: {"expired": [재료, ...], "soon": [...], "ok": [...], "none": [...]}
+    """
+    groups = {STATUS_EXPIRED: [], STATUS_SOON: [], STATUS_OK: [], STATUS_NO_EXPIRY: []}
+    for item in fridge_items_sorted(items):
+        status = expiry_status(earliest_batch(item)["expiry"], today)
+        groups[status].append(item)
+    return groups
