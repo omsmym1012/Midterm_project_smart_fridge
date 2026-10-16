@@ -1,0 +1,13 @@
+# Secrets and environment
+.env
+.venv/
+
+# Python build output
+__pycache__/
+
+# App data (personal fridge records)
+data/*.db
+data/*.json
+
+# Uploaded receipt photos
+uploads/
