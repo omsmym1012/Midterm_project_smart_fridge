@@ -3,7 +3,8 @@
 ## 프로젝트
 - 스마트 냉장고 & 장보기 리스트: 식재료 관리가 어려운 자취생을 위한 AI 어시스턴트 웹앱
 - 기술: Python + Streamlit, AI는 OpenRouter (키는 `.env`의 `OPENROUTER_API_KEY`)
-- 실행: `streamlit run app.py` (진입 파일은 아직 없음, 만들면 이 줄을 갱신)
+- 실행: `streamlit run app.py` (가상환경 `.venv` 활성화 후)
+- 구조: `app.py`(화면), `fridge_store.py`(냉장고 데이터 저장/불러오기, `data/fridge.json`)
 - 배포 예정: Streamlit Community Cloud
 
 ## 단계별 범위
