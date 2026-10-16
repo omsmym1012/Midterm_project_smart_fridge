@@ -7,6 +7,7 @@ from datetime import date
 
 import streamlit as st
 
+import classifier
 import fridge_store as store
 
 st.set_page_config(page_title="스마트 냉장고", page_icon="🧊")
@@ -14,6 +15,11 @@ st.title("🧊 스마트 냉장고")
 
 # 화면이 다시 그려질 때마다 파일에서 최신 목록을 읽어 온다.
 items = store.load_items()
+
+# 분류 기능이 생기기 전에 넣은 재료가 있으면 한 번만 분류해 둔다.
+for old_item in store.unclassified_items(items):
+    with st.spinner(f"'{old_item['name']}' 분류 중..."):
+        store.set_classification(items, old_item["id"], classifier.classify(old_item["name"]))
 
 # ---------------------------------------------------------------
 # 화면 상태 관리
@@ -89,7 +95,18 @@ if submitted:
     if not name:
         st.warning("재료 이름을 입력해 주세요.")
     else:
-        finish(store.add_item(items, name, None if no_expiry else expiry, quantity, unit))
+        classification = None
+        note = ""
+        # 이미 있는 재료에 합칠 때는 분류가 필요 없다. 새 재료일 때만 분류한다.
+        if not store.find_in_fridge_by_name(items, name):
+            with st.spinner(f"'{name}' 분류 중..."):
+                classification = classifier.classify(name)
+            if classification["source"] == "default":
+                note = " (자동 분류에 실패해서 '기타'로 넣었어요. '수정'에서 바꿀 수 있어요.)"
+        ok, message = store.add_item(
+            items, name, None if no_expiry else expiry, quantity, unit, classification
+        )
+        finish((ok, message + note if ok else message))
 
 
 # ---------------------------------------------------------------
@@ -118,10 +135,19 @@ def render_use_panel(item):
 
 
 def render_edit_item_panel(item):
-    """'수정' 버튼을 누르면 나오는 창: 이름과 단위를 고친다."""
+    """'수정' 버튼을 누르면 나오는 창: 이름·단위·종류·보관 방법·팁을 고친다."""
     with st.form(f"edit_item_form_{item['id']}"):
-        new_name = st.text_input("이름", value=item["name"])
-        new_unit = st.selectbox("단위", store.UNITS, index=store.UNITS.index(item["unit"]))
+        col_name, col_unit = st.columns([2, 1])
+        new_name = col_name.text_input("이름", value=item["name"])
+        new_unit = col_unit.selectbox("단위", store.UNITS, index=store.UNITS.index(item["unit"]))
+        col_cat, col_storage = st.columns(2)
+        new_category = col_cat.selectbox(
+            "종류", classifier.CATEGORIES, index=classifier.CATEGORIES.index(item["category"])
+        )
+        new_storage = col_storage.selectbox(
+            "보관 방법", classifier.STORAGES, index=classifier.STORAGES.index(item["storage"])
+        )
+        new_tip = st.text_input("보관 팁", value=item.get("tip", ""))
         col_ok, col_cancel = st.columns(2)
         ok = col_ok.form_submit_button("저장")
         cancel = col_cancel.form_submit_button("취소")
@@ -130,7 +156,17 @@ def render_edit_item_panel(item):
         if not new_name:
             st.warning("재료 이름을 입력해 주세요.")
         else:
-            finish(store.update_item(items, item["id"], new_name, new_unit))
+            new_tip = new_tip.strip()
+            changed = (new_category, new_storage, new_tip) != (
+                item["category"], item["storage"], item.get("tip", "")
+            )
+            result = store.update_item(
+                items, item["id"], new_name, new_unit, new_category, new_storage, new_tip
+            )
+            # 분류를 직접 고쳤으면 기억해 두고, 다음에 같은 이름을 넣을 때 그대로 쓴다.
+            if result[0] and changed:
+                classifier.remember(new_name, new_category, new_storage, new_tip)
+            finish(result)
     if cancel:
         close_action()
         st.rerun()
@@ -186,6 +222,8 @@ def render_batches(item):
     keep_open = bool(action and action["item_id"] == item["id"] and action["batch_id"])
 
     with st.expander(f"유통기한별 보기 ({len(item['batches'])}묶음)", expanded=keep_open):
+        if item.get("tip"):
+            st.caption(f"💡 {item['tip']}")
         for batch in store.sorted_batches(item):
             col_date, col_qty, col_edit, col_del = st.columns([2, 2, 1, 1])
             col_date.write(store.format_expiry(batch["expiry"]))
@@ -216,10 +254,22 @@ def render_batches(item):
 st.subheader("냉장고 목록")
 fridge = store.fridge_items_sorted(items)
 
+# 종류·보관 방법 필터 ("전체"면 거르지 않음)
+col_filter_cat, col_filter_storage = st.columns(2)
+filter_category = col_filter_cat.selectbox("종류", ["전체"] + classifier.CATEGORIES)
+filter_storage = col_filter_storage.selectbox("보관", ["전체"] + classifier.STORAGES)
+filtered = [
+    item for item in fridge
+    if filter_category in ("전체", item["category"])
+    and filter_storage in ("전체", item["storage"])
+]
+
 if not fridge:
     st.info("냉장고가 비어 있어요. 위에서 재료를 추가해 보세요.")
+elif not filtered:
+    st.info("조건에 맞는 재료가 없어요.")
 
-for item in fridge:
+for item in filtered:
     with st.container(border=True):
         first = store.earliest_batch(item)
         unit = item["unit"]
@@ -229,6 +279,7 @@ for item in fridge:
             [2, 3, 1, 1.1, 1, 1]
         )
         col_name.markdown(f"**{item['name']}**")
+        col_name.caption(f"{item['category']} · {item['storage']}")
         col_summary.write(
             f"총 {store.format_quantity(store.total_quantity(item), unit)} · "
             f"{store.format_expiry(first['expiry'])} "

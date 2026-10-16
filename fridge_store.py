@@ -9,6 +9,7 @@
 
     {
       "id": "...", "name": "우유", "unit": "팩", "status": "in_fridge",
+      "category": "유제품·계란", "storage": "냉장", "tip": "개봉 후에는 ...",
       "batches": [
         {"id": "...", "expiry": "2026-10-18", "quantity": 1},
         {"id": "...", "expiry": "2026-10-25", "quantity": 2},
@@ -151,6 +152,20 @@ def sorted_batches(item):
     return sorted(item["batches"], key=_expiry_key)
 
 
+def unclassified_items(items):
+    """분류 정보가 없는 재료 (분류 기능이 생기기 전에 넣은 재료)"""
+    return [item for item in items if item["status"] == STATUS_IN_FRIDGE and not item.get("category")]
+
+
+def set_classification(items, item_id, classification):
+    """재료에 분류 결과를 넣고 저장한다."""
+    item = _find(items, item_id)
+    item["category"] = classification["category"]
+    item["storage"] = classification["storage"]
+    item["tip"] = classification.get("tip", "")
+    save_items(items)
+
+
 def fridge_items_sorted(items):
     """냉장고에 남아 있는 재료만 골라 가장 빠른 유통기한 순서로 정렬한다."""
     in_fridge = [item for item in items if item["status"] == STATUS_IN_FRIDGE]
@@ -178,10 +193,12 @@ def format_expiry(expiry_str):
 # 재료 추가 / 사용 / 다 씀
 # 각 함수는 (성공 여부, 안내 메시지)를 돌려준다. 화면은 이 메시지를 그대로 보여 준다.
 # ---------------------------------------------------------------
-def add_item(items, name, expiry, quantity, unit):
+def add_item(items, name, expiry, quantity, unit, classification=None):
     """재료를 추가한다. 같은 이름이 이미 있으면 그 줄에 합친다.
 
     expiry: date 객체, 기한 없음이면 None
+    classification: 새 재료일 때 쓸 분류 결과 {"category", "storage", "tip"}
+                    (이미 있는 재료에 합칠 때는 기존 분류를 그대로 둔다)
     """
     expiry_str = expiry.isoformat() if expiry else None
     existing = find_in_fridge_by_name(items, name)
@@ -203,6 +220,9 @@ def add_item(items, name, expiry, quantity, unit):
             "name": name,
             "unit": unit,
             "status": STATUS_IN_FRIDGE,
+            "category": (classification or {}).get("category"),
+            "storage": (classification or {}).get("storage"),
+            "tip": (classification or {}).get("tip", ""),
             "added_at": _now(),
             "batches": [{"id": _new_id(), "expiry": expiry_str, "quantity": quantity}],
         }
@@ -252,14 +272,17 @@ def mark_used(items, item_id):
 # ---------------------------------------------------------------
 # 수정 / 삭제 (재료 줄 전체)
 # ---------------------------------------------------------------
-def update_item(items, item_id, new_name, new_unit):
-    """재료의 이름과 단위를 수정한다."""
+def update_item(items, item_id, new_name, new_unit, category, storage, tip):
+    """재료의 이름·단위·분류(종류, 보관 방법, 팁)를 수정한다."""
     item = _find(items, item_id)
     # 바꾼 이름이 다른 재료와 겹치면 두 줄이 같은 이름이 되므로 막는다.
     if find_in_fridge_by_name(items, new_name, exclude_id=item_id):
         return False, f"'{new_name}'은(는) 이미 냉장고에 있어요. 다른 이름을 써 주세요."
     item["name"] = new_name
     item["unit"] = new_unit
+    item["category"] = category
+    item["storage"] = storage
+    item["tip"] = tip
     save_items(items)
     return True, f"'{new_name}' 정보를 수정했어요."
 
