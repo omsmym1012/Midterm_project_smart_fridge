@@ -420,3 +420,54 @@ def expiry_summary(items, today=None):
         status = expiry_status(earliest_batch(item)["expiry"], today)
         groups[status].append(item)
     return groups
+
+
+# ---------------------------------------------------------------
+# 냉장고 칸 (보관 위치)
+# 재료의 "zone" 값에 칸 id를 저장한다. 값이 없으면(None) 아직 칸에 넣지 않은 새 재료다.
+# ---------------------------------------------------------------
+ZONES = {
+    "top": "냉장 위칸",
+    "middle": "냉장 가운데칸",
+    "bottom": "냉장 아래칸",
+    "crisper": "신선칸",
+    "door": "냉장 문칸",
+    "freezer": "냉동 칸",
+    "freezer_door": "냉동 문칸",
+    "outside": "냉장고 밖",
+}
+
+# 냉장 보관 재료의 종류별 추천 칸
+# - 채소·과일: 습도가 유지되는 신선칸
+# - 육류·해산물: 가장 차가운 아래칸 (핏물이 다른 재료에 떨어지지 않게)
+# - 양념·소스·음료: 자주 꺼내고 온도 변화에 강해서 문칸
+ZONE_BY_CATEGORY = {
+    "채소": "crisper",
+    "과일": "crisper",
+    "육류": "bottom",
+    "해산물": "bottom",
+    "유제품·계란": "middle",
+    "양념·소스": "door",
+    "음료": "door",
+    "곡류·면": "top",
+    "가공·냉동식품": "top",
+}
+
+
+def recommend_zone(item):
+    """보관 방법과 종류를 보고 추천 칸 id를 정한다."""
+    if item.get("storage") == "냉동":
+        return "freezer"
+    if item.get("storage") == "실온":
+        return "outside"
+    return ZONE_BY_CATEGORY.get(item.get("category"), "middle")
+
+
+def set_zone(items, item_id, zone):
+    """재료를 다른 칸으로 옮긴다. zone이 None이면 "새 재료"로 되돌린다. 바뀌었으면 True."""
+    item = _find(items, item_id)
+    if item is None or (zone is not None and zone not in ZONES) or item.get("zone") == zone:
+        return False
+    item["zone"] = zone
+    save_items(items)
+    return True

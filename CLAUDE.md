@@ -6,8 +6,9 @@
 - 실행: `streamlit run app.py` (가상환경 `.venv` 활성화 후)
 - 구조
   - `app.py`: 진입 파일, 사이드바 메뉴(`st.navigation`)만 담당
-  - `views/fridge.py`(냉장고), `views/shopping.py`(장보기), `views/recipe.py`(요리 추천): 페이지 화면
+  - `views/fridge.py`(냉장고), `views/zones.py`(냉장고 칸), `views/shopping.py`(장보기), `views/recipe.py`(요리 추천): 페이지 화면
   - `fridge_store.py`: 냉장고 데이터 저장/불러오기 (`data/fridge.json`)
+  - `fridge_board.py`: 냉장고 칸 드래그 앤 드롭 화면 (`st.components.v2`)
   - `shopping_store.py`: 장보기 데이터 저장/불러오기, 추천 후보 (`data/shopping.json`)
   - `classifier.py`: 재료 분류·추천 단위 (목록 → AI, 결과는 `data/classify_cache.json`)
 - 배포 예정: Streamlit Community Cloud
