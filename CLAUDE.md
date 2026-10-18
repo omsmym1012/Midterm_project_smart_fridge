@@ -4,7 +4,12 @@
 - 스마트 냉장고 & 장보기 리스트: 식재료 관리가 어려운 자취생을 위한 AI 어시스턴트 웹앱
 - 기술: Python + Streamlit, AI는 OpenRouter (키는 `.env`의 `OPENROUTER_API_KEY`)
 - 실행: `streamlit run app.py` (가상환경 `.venv` 활성화 후)
-- 구조: `app.py`(화면), `fridge_store.py`(냉장고 데이터 저장/불러오기, `data/fridge.json`), `classifier.py`(재료 분류: 목록 → AI, 결과는 `data/classify_cache.json`)
+- 구조
+  - `app.py`: 진입 파일, 사이드바 메뉴(`st.navigation`)만 담당
+  - `views/fridge.py`(냉장고), `views/shopping.py`(장보기), `views/recipe.py`(요리 추천): 페이지 화면
+  - `fridge_store.py`: 냉장고 데이터 저장/불러오기 (`data/fridge.json`)
+  - `shopping_store.py`: 장보기 데이터 저장/불러오기, 추천 후보 (`data/shopping.json`)
+  - `classifier.py`: 재료 분류·추천 단위 (목록 → AI, 결과는 `data/classify_cache.json`)
 - 배포 예정: Streamlit Community Cloud
 
 ## 단계별 범위
@@ -27,3 +32,4 @@
 - 결정이 필요한 부분은 단계별로 질문하며 진행하기
 - 기능 하나를 추가할 때마다 커밋,푸시할지 사용자에게 묻기. 기능이 아니더라도 수정사항이 있거나 작업량이 많아지면 커밋,푸시할지 질문하기
 - 앱을 직접 실행할 때와 같이 가상환경이 필요할 때 알려주기
+- 불필요하거나 길어지는 안내 문구 추가하지 않기

@@ -329,6 +329,34 @@ def update_batch(items, item_id, batch_id, new_expiry, new_quantity):
     return True, "묶음 정보를 수정했어요."
 
 
+def discard_batches(items, item_id, batch_ids):
+    """기한 지난 묶음들을 버린다. (장보기에 담으면서 "버리기"를 골랐을 때)
+
+    남은 묶음이 없으면 재료 전체를 "다 씀" 상태로 바꾼다.
+    """
+    item = _find(items, item_id)
+    item["batches"] = [batch for batch in item["batches"] if batch["id"] not in batch_ids]
+    if not item["batches"]:
+        mark_used(items, item_id)
+    else:
+        save_items(items)
+
+
+def expired_batches(item, today=None):
+    """재료의 묶음 중 기한이 지난 것들"""
+    return [b for b in item["batches"] if expiry_status(b["expiry"], today) == STATUS_EXPIRED]
+
+
+def soon_batches(item, today=None):
+    """재료의 묶음 중 기한이 3일 이내로 남은 것들 (오늘 포함)"""
+    return [b for b in item["batches"] if expiry_status(b["expiry"], today) == STATUS_SOON]
+
+
+def used_items(items):
+    """"다 씀" 상태인 재료 기록들"""
+    return [item for item in items if item["status"] == STATUS_USED]
+
+
 def delete_batch(items, item_id, batch_id):
     """묶음 하나를 지운다. 마지막 묶음이었다면 재료 줄도 함께 지운다."""
     item = _find(items, item_id)
