@@ -11,6 +11,7 @@ HTML·CSS·JavaScript를 직접 넣은 작은 컴포넌트를 만든다.
 
 import streamlit as st
 
+import classifier
 import fridge_store as store
 
 # 컴포넌트 모양
@@ -235,8 +236,17 @@ export default function (component) {
 _board = st.components.v2.component("fridge_board", css=CSS, js=JS)
 
 
+def recommend(item, cache):
+    """추천 칸: 이름으로 찾은 칸(목록·AI)을 먼저 쓰고, 없거나 보관 방법과 안 맞으면 종류 규칙을 쓴다."""
+    zone = classifier.name_zone(item["name"], cache)
+    if zone and store.zone_fits_storage(zone, item.get("storage")):
+        return zone
+    return store.recommend_zone(item)
+
+
 def _board_data(items):
     """컴포넌트에 넘길 데이터: 칸 이름과 냉장고 재료 목록"""
+    cache = classifier.load_cache()  # 재료마다 파일을 읽지 않도록 한 번만 읽는다.
     data_items = []
     for item in store.fridge_items_sorted(items):
         first = store.earliest_batch(item)
@@ -248,7 +258,7 @@ def _board_data(items):
                 f"{store.d_day_label(first['expiry'])}",
                 "status": store.expiry_status(first["expiry"]),
                 "zone": item.get("zone"),
-                "recommend": store.recommend_zone(item),
+                "recommend": recommend(item, cache),
             }
         )
     return {"zones": store.ZONES, "items": data_items}

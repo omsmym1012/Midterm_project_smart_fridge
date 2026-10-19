@@ -454,8 +454,17 @@ ZONE_BY_CATEGORY = {
 }
 
 
+# 칸마다 맞는 보관 방법 (적혀 있지 않은 칸은 냉장)
+ZONE_STORAGE = {"freezer": "냉동", "freezer_door": "냉동", "outside": "실온"}
+
+
+def zone_fits_storage(zone, storage):
+    """칸이 재료의 보관 방법과 맞는지. (예: 냉동 보관 재료를 신선칸에 추천하지 않기 위해)"""
+    return ZONE_STORAGE.get(zone, "냉장") == (storage or "냉장")
+
+
 def recommend_zone(item):
-    """보관 방법과 종류를 보고 추천 칸 id를 정한다."""
+    """보관 방법과 종류를 보고 추천 칸 id를 정한다. (이름으로 못 찾았을 때 쓰는 규칙)"""
     if item.get("storage") == "냉동":
         return "freezer"
     if item.get("storage") == "실온":

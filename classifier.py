@@ -5,6 +5,8 @@
 2) 미리 만든 목록(BUILTIN)에 있으면 사용 — 빠르고 무료
 3) 둘 다 없으면 OpenRouter AI에게 물어보고, 결과를 캐시에 저장
 4) AI도 실패하면 "기타 / 냉장 / 개"로 두고 사용자가 고칠 수 있게 한다
+
+냉장고 칸 추천(zone)도 같은 순서로 이름을 보고 정한다. (캐시 → 목록 BUILTIN_ZONE → AI)
 """
 
 import json
@@ -15,7 +17,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-from fridge_store import UNITS
+from fridge_store import UNITS, ZONES
 
 # .env 파일의 OPENROUTER_API_KEY를 환경 변수로 읽어 온다. (내 컴퓨터에서 실행할 때)
 load_dotenv()
@@ -138,6 +140,42 @@ BUILTIN = {
     "콜라": ("음료", "실온", "캔", "개봉 후엔 냉장하세요."),
 }
 
+# 이름별 추천 칸 (냉장고 칸 화면에서 재료를 짚었을 때 초록색으로 보여 줄 칸)
+# 같은 종류라도 재료마다 알맞은 칸이 달라서 이름으로 정한다. (예: 우유는 문칸, 치즈는 가운데칸)
+BUILTIN_ZONE = {
+    # 채소: 대부분 습도가 유지되는 신선칸, 실온 보관 채소는 냉장고 밖
+    "대파": "crisper", "쪽파": "crisper", "양파": "outside", "마늘": "crisper",
+    "감자": "outside", "고구마": "outside", "당근": "crisper", "양배추": "crisper",
+    "배추": "crisper", "상추": "crisper", "깻잎": "crisper", "시금치": "crisper",
+    "콩나물": "crisper", "숙주": "crisper", "애호박": "crisper", "오이": "crisper",
+    "가지": "crisper", "버섯": "crisper", "팽이버섯": "crisper", "고추": "crisper",
+    "파프리카": "crisper", "브로콜리": "crisper", "토마토": "outside", "방울토마토": "crisper",
+    "무": "crisper",
+    # 과일
+    "사과": "crisper", "바나나": "outside", "귤": "outside", "딸기": "crisper",
+    "포도": "crisper", "레몬": "door", "아보카도": "outside", "블루베리": "crisper",
+    # 육류·해산물: 가장 차가운 아래칸 (핏물이 다른 재료에 떨어지지 않게), 냉동 보관은 냉동 칸
+    "돼지고기": "bottom", "삼겹살": "bottom", "소고기": "bottom", "닭고기": "bottom",
+    "닭가슴살": "freezer", "다짐육": "bottom", "베이컨": "middle",
+    "고등어": "freezer", "새우": "freezer", "오징어": "freezer", "연어": "bottom",
+    "어묵": "middle", "참치캔": "outside",
+    # 유제품·계란: 계란은 온도가 일정한 안쪽 선반, 우유·버터는 자주 꺼내는 문칸
+    "계란": "middle", "달걀": "middle", "우유": "door", "치즈": "middle",
+    "요거트": "top", "버터": "door", "두부": "middle",
+    # 곡류·면
+    "쌀": "outside", "밥": "freezer", "라면": "outside", "파스타": "outside",
+    "식빵": "freezer", "빵": "outside", "떡": "freezer", "우동": "middle",
+    # 양념·소스: 병·통 소스는 문칸, 김치통은 무겁고 차가워야 해서 아래칸
+    "간장": "outside", "고추장": "door", "된장": "door", "소금": "outside",
+    "설탕": "outside", "식용유": "outside", "참기름": "outside", "케첩": "door",
+    "마요네즈": "door", "김치": "bottom",
+    # 가공·냉동식품
+    "만두": "freezer", "햄": "top", "스팸": "outside", "소시지": "top",
+    "냉동피자": "freezer", "아이스크림": "freezer", "김": "outside",
+    # 음료
+    "주스": "door", "생수": "outside", "맥주": "door", "콜라": "outside",
+}
+
 
 def _normalize(name):
     """비교용 이름: 띄어쓰기를 지우고 영문은 소문자로 (fridge_store와 같은 규칙)"""
@@ -168,28 +206,34 @@ def _save_cache(cache):
 def remember(name, category, storage, unit, tip):
     """사용자가 고친 분류를 기억한다. 다음에 같은 이름을 넣으면 이 값을 추천한다."""
     cache = _load_cache()
-    cache[_normalize(name)] = {"category": category, "storage": storage, "unit": unit, "tip": tip}
+    key = _normalize(name)
+    old_zone = cache.get(key, {}).get("zone")  # 예전 AI가 알려 준 추천 칸은 지우지 않고 남긴다.
+    cache[key] = {"category": category, "storage": storage, "unit": unit, "tip": tip, "zone": old_zone}
     _save_cache(cache)
 
 
 # ---------------------------------------------------------------
 # 미리 만든 목록에서 찾기
 # ---------------------------------------------------------------
-def _from_builtin(name):
-    """목록에서 찾는다. 정확히 같은 이름이 없으면 이름 안에 포함된 단어로 찾는다.
+def _match(table, name):
+    """목록(table)에서 찾는다. 정확히 같은 이름이 없으면 이름 안에 포함된 단어로 찾는다.
 
     예: "서울우유" → "우유", "냉동만두" → "만두"
     여러 개가 포함되면 가장 긴 단어를 쓴다. ("방울토마토"는 "토마토"보다 "방울토마토")
-    반환: (종류, 보관, 단위, 팁) 또는 None
     """
     key = _normalize(name)
-    if key in BUILTIN:
-        return BUILTIN[key]
+    if key in table:
+        return table[key]
     # 한 글자 단어("무", "김", "밥")는 엉뚱하게 걸리기 쉬워서("김밥" → "김"), 이름 전체가 같을 때만 쓴다.
-    matches = [word for word in BUILTIN if len(word) >= 2 and word in key]
+    matches = [word for word in table if len(word) >= 2 and word in key]
     if matches:
-        return BUILTIN[max(matches, key=len)]
+        return table[max(matches, key=len)]
     return None
+
+
+def _from_builtin(name):
+    """분류 목록에서 찾는다. 반환: (종류, 보관, 단위, 팁) 또는 None"""
+    return _match(BUILTIN, name)
 
 
 # ---------------------------------------------------------------
@@ -210,7 +254,7 @@ def _get_api_key():
 
 
 def _ask_ai(name):
-    """AI에게 분류를 요청한다. 성공하면 (종류, 보관, 단위, 팁), 실패하면 None."""
+    """AI에게 분류를 요청한다. 성공하면 (종류, 보관, 단위, 팁, 추천 칸), 실패하면 None."""
     api_key = _get_api_key()
     if not api_key:
         return None
@@ -221,8 +265,11 @@ def _ask_ai(name):
         f"storage(보관 방법)는 다음 중 하나: {', '.join(STORAGES)}\n"
         f"unit(장 볼 때 흔히 세는 단위)는 다음 중 하나: {', '.join(UNITS)}\n"
         "tip은 자취생을 위한 보관 팁 한 문장(40자 이내)입니다.\n"
+        "zone(냉장고에서 두기 좋은 칸)은 다음 id 중 하나: "
+        + ", ".join(f"{zone_id}({title})" for zone_id, title in ZONES.items())
+        + "\n"
         "다른 설명 없이 JSON 한 개만 답하세요. 예:\n"
-        '{"category": "채소", "storage": "냉장", "unit": "개", "tip": "키친타월에 싸서 보관하세요."}'
+        '{"category": "채소", "storage": "냉장", "unit": "개", "tip": "키친타월에 싸서 보관하세요.", "zone": "crisper"}'
     )
     # 모델을 앞에서부터 차례로 시도하고, 처음으로 제대로 답한 결과를 쓴다.
     for model in AI_MODELS:
@@ -233,7 +280,7 @@ def _ask_ai(name):
 
 
 def _ask_one_model(api_key, model, prompt):
-    """모델 하나에 요청한다. 성공하면 (종류, 보관, 단위, 팁), 실패하면 None."""
+    """모델 하나에 요청한다. 성공하면 (종류, 보관, 단위, 팁, 추천 칸), 실패하면 None."""
     try:
         response = requests.post(
             AI_URL,
@@ -266,7 +313,8 @@ def _ask_one_model(api_key, model, prompt):
         return None
     if unit not in UNITS:
         unit = DEFAULT_UNIT
-    return category, storage, unit, str(data.get("tip", "")).strip()
+    zone = data.get("zone") if data.get("zone") in ZONES else None  # 칸이 이상하면 종류 규칙으로 대신한다.
+    return category, storage, unit, str(data.get("tip", "")).strip(), zone
 
 
 # ---------------------------------------------------------------
@@ -294,9 +342,9 @@ def classify(name):
 
     found = _ask_ai(name)
     if found:
-        category, storage, unit, tip = found
+        category, storage, unit, tip, zone = found
         # AI 결과는 저장해 두고 다음에는 다시 묻지 않는다.
-        cache[key] = {"category": category, "storage": storage, "unit": unit, "tip": tip}
+        cache[key] = {"category": category, "storage": storage, "unit": unit, "tip": tip, "zone": zone}
         _save_cache(cache)
         return {"category": category, "storage": storage, "unit": unit, "tip": tip, "source": "ai"}
 
@@ -304,3 +352,19 @@ def classify(name):
         "category": DEFAULT_CATEGORY, "storage": DEFAULT_STORAGE,
         "unit": DEFAULT_UNIT, "tip": "", "source": "default",
     }
+
+
+def name_zone(name, cache=None):
+    """재료 이름으로 추천 칸 id를 찾는다. (AI는 부르지 않는다)
+
+    캐시(예전 AI 결과) → 목록(BUILTIN_ZONE) 순서로 찾고, 없으면 None.
+    여러 재료를 한 번에 찾을 때는 cache를 미리 읽어서 넘기면 파일을 여러 번 읽지 않는다.
+    """
+    cache = _load_cache() if cache is None else cache
+    zone = cache.get(_normalize(name), {}).get("zone")
+    return zone if zone in ZONES else _match(BUILTIN_ZONE, name)
+
+
+def load_cache():
+    """캐시를 한 번 읽어 둘 때 쓴다. (name_zone에 넘기기용)"""
+    return _load_cache()
