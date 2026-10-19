@@ -451,6 +451,7 @@ ZONE_BY_CATEGORY = {
     "음료": "door",
     "곡류·면": "top",
     "가공·냉동식품": "top",
+    "밀키트·간편식": "middle",
 }
 
 
