@@ -11,6 +11,7 @@
 
 import streamlit as st
 
+import sample_data
 import shopping_store
 
 st.set_page_config(page_title="스마트 냉장고", page_icon="🧊")
@@ -34,4 +35,32 @@ pages = {
 }
 
 # st.navigation: 왼쪽 사이드바에 메뉴를 만들고, 고른 페이지를 실행한다.
-st.navigation(pages).run()
+page = st.navigation(pages)
+
+
+# ---------------------------------------------------------------
+# 🧪 테스트 데이터 넣기 (사이드바 아래)
+# 지금 데이터를 지우는 버튼이라 한 번 더 확인한 뒤 바꾼다.
+# ---------------------------------------------------------------
+def reset_to_sample():
+    sample_data.load_sample()
+    # 입력칸·열린 창·추천 결과 같은 화면 상태도 모두 지워서 처음 상태로 만든다.
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.session_state.flash = (True, "🧪 테스트 데이터를 넣었어요.")
+
+
+with st.sidebar:
+    st.divider()
+    if st.session_state.get("sample_ask"):
+        st.warning("지금 데이터가 지워져요. 테스트 데이터로 바꿀까요?")
+        col_yes, col_no = st.columns(2)
+        col_yes.button("바꾸기", key="sample_yes", type="primary", on_click=reset_to_sample)
+        col_no.button("취소", key="sample_no", on_click=lambda: st.session_state.pop("sample_ask", None))
+    else:
+        st.button(
+            "🧪 테스트 데이터 넣기", key="sample_open",
+            on_click=lambda: st.session_state.update(sample_ask=True),
+        )
+
+page.run()

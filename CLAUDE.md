@@ -13,6 +13,7 @@
   - `classifier.py`: 재료 분류·추천 단위 (목록 → AI, 결과는 `data/classify_cache.json`)
   - `recipe_store.py`: 요리 추천 (식품안전나라 레시피 → 부족하면 AI, 레시피는 `data/recipes.json`)
   - `ai_client.py`: OpenRouter 호출 공통 (무료 모델 차례로 시도)
+  - `sample_data.py`: 테스트 데이터 (사이드바 "🧪 테스트 데이터 넣기")
 - 배포 예정: Streamlit Community Cloud
 
 ## 단계별 범위
