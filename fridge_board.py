@@ -3,7 +3,7 @@
 Streamlit 기본 위젯에는 드래그 앤 드롭이 없어서, st.components.v2로
 HTML·CSS·JavaScript를 직접 넣은 작은 컴포넌트를 만든다.
 
-- 왼쪽: 냉장고 그림 (냉장실 위/가운데/아래/신선칸 + 문칸, 냉동실 칸 + 문칸, 냉장고 밖)
+- 왼쪽: 냉장고 그림 (위에서부터 냉동실 칸 + 문칸, 냉장실 위/가운데/아래/신선칸 + 문칸, 냉장고 밖)
 - 오른쪽: 아직 칸에 넣지 않은 "새 재료"
 - 재료를 마우스(또는 손가락)로 잡으면 추천 칸 색이 연하게 바뀌고,
   다른 칸에 놓으면 Python으로 {"item_id", "zone"}을 보낸다. ("move" 이벤트)
@@ -133,9 +133,10 @@ export default function (component) {
     }
 
     const fridge = el("div", "fb-fridge");
+    // 위에서부터 냉동실 → 냉장실 → 냉장고 밖 (일반 가정용 냉장고처럼 냉동실이 위)
     fridge.append(
-        makeSection("🧊 냉장실", ["top", "middle", "bottom", "crisper"], "door"),
         makeSection("❄️ 냉동실", ["freezer"], "freezer_door"),
+        makeSection("🧊 냉장실", ["top", "middle", "bottom", "crisper"], "door"),
         makeZone("outside", titles.outside + " (실온)")
     );
     const tray = makeZone("tray", "🆕 새 재료", "fb-tray");

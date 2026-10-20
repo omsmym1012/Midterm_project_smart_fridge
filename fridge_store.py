@@ -283,7 +283,7 @@ def mark_used(items, item_id):
     item["used_at"] = _now()
     item["batches"] = []  # 남은 양이 없으므로 묶음을 비운다.
     save_items(items)
-    return True, f"'{item['name']}'을(를) 다 썼어요."
+    return True, f"'{item['name']}'을(를) 소진했어요."
 
 
 # ---------------------------------------------------------------
@@ -330,16 +330,31 @@ def update_batch(items, item_id, batch_id, new_expiry, new_quantity):
 
 
 def discard_batches(items, item_id, batch_ids):
-    """기한 지난 묶음들을 버린다. (장보기에 담으면서 "버리기"를 골랐을 때)
+    """묶음들을 폐기한다. (기한이 지났거나 얼마 안 남아서 버릴 때)
 
-    남은 묶음이 없으면 재료 전체를 "다 씀" 상태로 바꾼다.
+    남은 묶음이 없으면 재료 전체를 "다 씀" 상태로 바꾸고, 폐기했다는 표시(discarded)를 남긴다.
+    반환: (성공 여부, 메시지)
     """
     item = _find(items, item_id)
     item["batches"] = [batch for batch in item["batches"] if batch["id"] not in batch_ids]
     if not item["batches"]:
         mark_used(items, item_id)
-    else:
+        item["discarded"] = True
         save_items(items)
+        return True, f"'{item['name']}'을(를) 폐기했어요."
+    save_items(items)
+    return True, f"'{item['name']}' 묶음을 폐기했어요. 남은 양: {format_quantity(total_quantity(item), item['unit'])}."
+
+
+def discard_item(items, item_id):
+    """재료 전체(모든 묶음)를 폐기한다."""
+    item = _find(items, item_id)
+    return discard_batches(items, item_id, [batch["id"] for batch in item["batches"]])
+
+
+def can_discard(expiry_str):
+    """폐기 버튼을 보여 줄지: 기한이 지났거나 3일 이내로 남았을 때만"""
+    return expiry_status(expiry_str) in (STATUS_EXPIRED, STATUS_SOON)
 
 
 def expired_batches(item, today=None):

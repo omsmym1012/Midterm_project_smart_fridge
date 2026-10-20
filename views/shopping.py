@@ -152,7 +152,8 @@ with st.container(border=True):
 st.subheader("📝 장보기 리스트")
 
 SOURCE_LABEL = {
-    shop.SOURCE_USED: "다 쓴 재료",
+    shop.SOURCE_USED: "소진한 재료",
+    shop.SOURCE_DISCARDED: "폐기한 재료",
     shop.SOURCE_EXPIRED: "기한 지난 재료",
     shop.SOURCE_SOON: "기한 임박 재료",
     shop.SOURCE_MANUAL: "직접 추가",

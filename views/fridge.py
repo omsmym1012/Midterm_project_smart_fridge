@@ -3,7 +3,7 @@
 - 맨 위: 유통기한 상태별 개수 + [+ 재료 추가] (팝업)
 - 가운데: 냉장고 칸 그림 (fridge_board.py)
   - 재료 카드를 끌어서 칸을 옮기고,
-  - 누르면 상세 팝업에서 사용·다 씀·수정·삭제, 유통기한별 묶음을 다룬다.
+  - 누르면 상세 팝업에서 사용·소진·폐기, 유통기한별 묶음을 다룬다.
 
 app.py의 사이드바 메뉴에서 "냉장고"를 고르면 이 파일이 실행된다.
 """
@@ -41,6 +41,7 @@ state = st.session_state
 state.setdefault("action", None)       # 예: {"kind": "use", "item_id": "...", "batch_id": None}
 state.setdefault("dialog_item", None)  # 상세 팝업이 열린 재료 id
 state.setdefault("add_open", False)    # 재료 추가 팝업이 열려 있는지
+state.setdefault("rebuy", None)        # 장보기에 추가할지 묻는 중인 재료 정보
 
 
 def open_action(kind, item_id, batch_id=None):
@@ -284,14 +285,33 @@ def add_dialog():
 
 # ---------------------------------------------------------------
 # 2) 재료 상세 팝업 (칸 그림에서 재료를 누르면 열림)
+#   [사용] 쓴 양 입력 / [소진] 전부 씀 / [폐기] 버림 (기한 지남·3일 이내일 때만)
+#   재료가 없어지거나 폐기하면 "장보기 리스트에 추가할까요?" 팝업을 띄운다.
 # ---------------------------------------------------------------
+def ask_rebuy(item, result, source):
+    """소진·폐기 결과를 처리한다. 성공하면 "장보기 리스트에 추가할까요?" 팝업을 띄운다.
+
+    source: 장보기에 담을 때 출처 (소진 = SOURCE_USED, 폐기 = SOURCE_DISCARDED)
+    """
+    ok, message = result
+    if not ok:
+        st.warning(message)
+        return
+    state.rebuy = {
+        "item_id": item["id"], "name": item["name"], "unit": item["unit"],
+        "source": source, "message": message,
+        "gone": item["status"] == store.STATUS_USED,  # 재료가 냉장고에서 없어졌는지
+    }
+    close_dialogs()
+    st.rerun()
+
+
 def after_use(item, result):
-    """사용/다 씀 결과를 처리한다. 재료를 다 썼으면 메시지 대신 "다시 살까요?"를 띄운다."""
+    """'사용' 결과: 남은 양이 0이 되어 소진됐으면 장보기에 추가할지 묻고, 아니면 메시지만 보여 준다."""
     if result[0] and item["status"] == store.STATUS_USED:
-        state.rebuy_ask = item["id"]
-        close_dialogs()
-        st.rerun()
-    finish(result)
+        ask_rebuy(item, result, shop.SOURCE_USED)
+    else:
+        finish(result)
 
 
 def render_use_panel(item):
@@ -313,98 +333,23 @@ def render_use_panel(item):
         after_use(item, store.use_quantity(items, item["id"], amount))
 
 
-def render_edit_item_panel(item):
-    """'수정' 버튼을 누르면 나오는 창: 이름·단위·종류·보관 방법·팁을 고친다."""
-    with st.form(f"edit_item_form_{item['id']}"):
-        col_name, col_unit = st.columns([2, 1])
-        new_name = col_name.text_input("이름", value=item["name"])
-        new_unit = col_unit.selectbox("단위", store.UNITS, index=store.UNITS.index(item["unit"]))
-        col_cat, col_storage = st.columns(2)
-        new_category = col_cat.selectbox(
-            "종류", classifier.CATEGORIES, index=classifier.CATEGORIES.index(item["category"])
-        )
-        new_storage = col_storage.selectbox(
-            "보관 방법", classifier.STORAGES, index=classifier.STORAGES.index(item["storage"])
-        )
-        new_tip = st.text_input("보관 팁", value=item.get("tip", ""))
-        col_ok, col_cancel = st.columns(2)
-        ok = col_ok.form_submit_button("저장")
-        col_cancel.form_submit_button("취소", on_click=close_action)
-    if ok:
-        new_name = new_name.strip()
-        if not new_name:
-            st.warning("재료 이름을 입력해 주세요.")
-            return
-        new_tip = new_tip.strip()
-        changed = (new_category, new_storage, new_tip) != (item["category"], item["storage"], item.get("tip", ""))
-        result = store.update_item(items, item["id"], new_name, new_unit, new_category, new_storage, new_tip)
-        # 분류를 직접 고쳤으면 기억해 두고, 다음에 같은 이름을 넣을 때 그대로 쓴다.
-        if result[0] and changed:
-            classifier.remember(new_name, new_category, new_storage, new_unit, new_tip)
-        finish(result)
-
-
-def render_confirm_delete(message, on_delete, key):
-    """삭제 전에 한 번 더 확인하는 창"""
-    st.warning(message)
-    col_ok, col_cancel = st.columns(2)
-    if col_ok.button("삭제", key=f"confirm_{key}", type="primary"):
-        finish(on_delete())
-    col_cancel.button("취소", key=f"cancel_{key}", on_click=close_action)
-
-
-def render_edit_batch_panel(item, batch):
-    """묶음의 '수정' 버튼을 누르면 나오는 창: 유통기한과 수량을 고친다."""
-    current = date.fromisoformat(batch["expiry"]) if batch["expiry"] else date.today()
-    with st.form(f"edit_batch_form_{batch['id']}"):
-        col_date, col_none = st.columns([2, 1])
-        new_expiry = col_date.date_input("유통기한", value=current)
-        col_none.write("")
-        new_no_expiry = col_none.checkbox("기한 없음", value=batch["expiry"] is None)
-        new_quantity = st.number_input(
-            f"수량 ({item['unit']})", min_value=0.1, value=float(batch["quantity"]), step=1.0, format="%g",
-        )
-        col_ok, col_cancel = st.columns(2)
-        ok = col_ok.form_submit_button("저장")
-        col_cancel.form_submit_button("취소", on_click=close_action)
-    if ok:
-        finish(
-            store.update_batch(items, item["id"], batch["id"], None if new_no_expiry else new_expiry, new_quantity)
-        )
-
-
 def render_batches(item):
-    """유통기한별 묶음 목록. 묶음마다 수정·삭제할 수 있다."""
+    """유통기한별 묶음 목록. 기한이 지났거나 3일 이내인 묶음에만 [폐기] 버튼이 있다."""
     st.markdown(f"**유통기한별 ({len(item['batches'])}묶음)**")
     for batch in store.sorted_batches(item):
-        col_date, col_qty, col_edit, col_del = st.columns([2.2, 1.3, 1, 1], vertical_alignment="center")
+        col_date, col_qty, col_btn = st.columns([2.2, 1.3, 1], vertical_alignment="center")
         col_date.markdown(f"{store.format_expiry(batch['expiry'])} {expiry_badge(batch['expiry'])}")
         col_qty.write(store.format_quantity(batch["quantity"], item["unit"]))
-        col_edit.button(
-            "수정", key=f"edit_batch_{batch['id']}",
-            on_click=open_action, args=("edit_batch", item["id"], batch["id"]),
-        )
-        col_del.button(
-            "삭제", key=f"del_batch_{batch['id']}",
-            on_click=open_action, args=("delete_batch", item["id"], batch["id"]),
-        )
-        if is_open("edit_batch", item["id"], batch["id"]):
-            render_edit_batch_panel(item, batch)
-        if is_open("delete_batch", item["id"], batch["id"]):
-            render_confirm_delete(
-                f"{store.format_expiry(batch['expiry'])} 묶음"
-                f"({store.format_quantity(batch['quantity'], item['unit'])})을 삭제할까요?",
-                lambda: store.delete_batch(items, item["id"], batch["id"]),
-                key=batch["id"],
-            )
+        if store.can_discard(batch["expiry"]) and col_btn.button("폐기", key=f"discard_batch_{batch['id']}"):
+            ask_rebuy(item, store.discard_batches(items, item["id"], [batch["id"]]), shop.SOURCE_DISCARDED)
 
 
 @st.dialog("재료 정보", on_dismiss=close_dialogs)
 def item_dialog(item_id):
-    """재료 상세 팝업: 요약, 사용·다 씀·수정·삭제 버튼, 유통기한별 묶음"""
+    """재료 상세 팝업: 요약, [사용] [소진] [폐기], 유통기한별 묶음"""
     item = next((i for i in items if i["id"] == item_id and i["status"] == store.STATUS_IN_FRIDGE), None)
     if item is None:
-        st.info("이미 다 썼거나 지운 재료예요.")
+        st.info("이미 소진했거나 폐기한 재료예요.")
         return
     first = store.earliest_batch(item)
     unit = item["unit"]
@@ -418,35 +363,62 @@ def item_dialog(item_id):
     if item.get("tip"):
         st.caption(f"💡 {item['tip']}")
 
-    # on_click: 버튼을 누르면 해당 입력창을 연다. ("다 씀"은 바로 실행)
-    col_use, col_used, col_edit, col_del = st.columns(4)
-    col_use.button("사용", key=f"use_{item['id']}", on_click=open_action, args=("use", item["id"]), width="stretch")
-    if col_used.button("다 씀", key=f"used_{item['id']}", width="stretch"):
-        after_use(item, store.mark_used(items, item["id"]))
-    col_edit.button(
-        "수정", key=f"edit_{item['id']}", on_click=open_action, args=("edit_item", item["id"]), width="stretch"
+    # 폐기 버튼은 기한이 지났거나 3일 이내인 묶음이 있을 때만 보여 준다.
+    discardable = store.can_discard(first["expiry"])
+    columns = st.columns(3)
+    columns[0].button(
+        "사용", key=f"use_{item['id']}", on_click=open_action, args=("use", item["id"]), width="stretch"
     )
-    col_del.button(
-        "삭제", key=f"del_{item['id']}", on_click=open_action, args=("delete_item", item["id"]), width="stretch"
-    )
+    if columns[1].button("소진", key=f"used_{item['id']}", width="stretch"):
+        ask_rebuy(item, store.mark_used(items, item["id"]), shop.SOURCE_USED)
+    if discardable and columns[2].button("폐기", key=f"discard_{item['id']}", width="stretch"):
+        ask_rebuy(item, store.discard_item(items, item["id"]), shop.SOURCE_DISCARDED)
 
     if is_open("use", item["id"]):
         render_use_panel(item)
-    if is_open("edit_item", item["id"]):
-        render_edit_item_panel(item)
-    if is_open("delete_item", item["id"]):
-        render_confirm_delete(
-            f"'{item['name']}'을(를) 모든 묶음까지 삭제할까요? (다 씀 기록도 남지 않아요)",
-            lambda: store.delete_item(items, item["id"]),
-            key=item["id"],
-        )
 
     st.divider()
     render_batches(item)
 
 
 # ---------------------------------------------------------------
-# 3) 맨 위: 상태별 개수 + [+ 재료 추가]
+# 3) "장보기 리스트에 추가할까요?" 팝업 (소진·폐기 뒤)
+# ---------------------------------------------------------------
+def close_rebuy():
+    """✕로 닫으면 묻지 않은 것으로 둔다. (장보기의 '다시 살까요?'에 그대로 남는다)"""
+    state.rebuy = None
+
+
+def answer_rebuy(buy):
+    """[추가]면 장보기 리스트에 담는다. 어느 쪽이든 장보기의 '다시 살까요?'에는 다시 나오지 않게 한다."""
+    info = state.rebuy
+    data = shop.load()
+    result = (True, f"{info['message']} 장보기에는 추가하지 않았어요.")
+    if buy:
+        ok, message = shop.add_item(data, info["name"], 1.0, info["unit"], info["source"])
+        result = (ok, f"{info['message']} {message}")
+    if info["gone"]:
+        shop.mark_handled(data, [f"used:{info['item_id']}"])
+    state.rebuy = None
+    state.flash = result
+
+
+@st.dialog("🛒 장보기", on_dismiss=close_rebuy)
+def rebuy_dialog():
+    info = state.rebuy
+    st.write(info["message"])
+    st.markdown(f"**'{info['name']}'을(를) 장보기 리스트에 추가할까요?**")
+    col_yes, col_no = st.columns(2)
+    if col_yes.button("추가", type="primary", width="stretch"):
+        answer_rebuy(True)
+        st.rerun()
+    if col_no.button("추가 안 함", width="stretch"):
+        answer_rebuy(False)
+        st.rerun()
+
+
+# ---------------------------------------------------------------
+# 4) 맨 위: 상태별 개수 + [+ 재료 추가]
 # ---------------------------------------------------------------
 col_summary, col_add = st.columns([4, 1.3], vertical_alignment="center")
 col_summary.markdown(summary_badges())
@@ -462,33 +434,6 @@ col_add.button("＋ 재료 추가", type="primary", width="stretch", on_click=op
 if "flash" in state:
     ok, message = state.pop("flash")
     (st.success if ok else st.warning)(message)
-
-
-# ---------------------------------------------------------------
-# 4) "다 씀" 뒤에 묻는 "다시 살까요?"
-# 재료를 다 쓰면 그 재료 id를 rebuy_ask에 넣어 두고, 여기서 장보기에 담을지 묻는다.
-# ---------------------------------------------------------------
-def answer_rebuy(item, buy):
-    """[담기]면 장보기 리스트에 담고, 어느 쪽이든 장보기 추천에는 다시 나오지 않게 한다."""
-    data = shop.load()
-    result = (True, f"'{item['name']}'은(는) 담지 않았어요.")
-    if buy:
-        result = shop.add_item(data, item["name"], 1.0, item["unit"], shop.SOURCE_USED)
-    shop.mark_handled(data, [f"used:{item['id']}"])
-    state.rebuy_ask = None
-    state.flash = result
-    st.rerun()
-
-
-rebuy_item = next((i for i in items if i["id"] == state.get("rebuy_ask")), None)
-if rebuy_item:
-    with st.container(border=True):
-        st.markdown(f"'{rebuy_item['name']}'을(를) 다 썼어요. **🛒 다시 살까요?**")
-        col_buy, col_skip, _ = st.columns([1, 1.3, 3])
-        if col_buy.button("담기", key="rebuy_yes", type="primary"):
-            answer_rebuy(rebuy_item, True)
-        if col_skip.button("안 살래요", key="rebuy_no"):
-            answer_rebuy(rebuy_item, False)
 
 
 # ---------------------------------------------------------------
@@ -516,11 +461,13 @@ def on_select():
 if not store.fridge_items_sorted(items):
     st.info("냉장고가 비어 있어요. '＋ 재료 추가'로 재료를 넣어 보세요.")
 else:
-    st.caption("재료를 누르면 사용·수정, 끌면 칸을 옮길 수 있어요.")
+    st.caption("재료를 누르면 사용·소진·폐기, 끌면 칸을 옮길 수 있어요.")
     fridge_board(items, key=BOARD_KEY, on_move=on_move, on_select=on_select)
 
-# 열려 있어야 하는 팝업을 연다.
-if state.add_open:
+# 열려 있어야 하는 팝업을 연다. (한 번에 하나만)
+if state.rebuy:
+    rebuy_dialog()
+elif state.add_open:
     add_dialog()
 elif state.dialog_item:
     item_dialog(state.dialog_item)

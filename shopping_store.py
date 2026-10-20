@@ -31,6 +31,7 @@ SOURCE_EXPIRED = "expired"
 SOURCE_SOON = "soon"
 SOURCE_MANUAL = "manual"
 SOURCE_RECIPE = "recipe"  # 요리 추천의 부족한 재료
+SOURCE_DISCARDED = "discarded"  # 폐기한 재료
 
 
 # ---------------------------------------------------------------
@@ -202,7 +203,8 @@ def candidates(fridge_items, data):
                 "keys": [key],
                 "item_id": item["id"],
                 "batch_ids": [],
-                "detail": f"다 씀 · {fridge_store.format_expiry(used_date) if used_date else ''}",
+                "detail": f"{'폐기' if item.get('discarded') else '소진'} · "
+                f"{fridge_store.format_expiry(used_date) if used_date else ''}",
             }
         )
     return result
