@@ -74,7 +74,7 @@ def find_by_name(data, name):
 def add_item(data, name, quantity, unit, source=SOURCE_MANUAL):
     """장보기 항목을 추가한다. 같은 이름이 이미 있으면 추가하지 않고 알려 준다."""
     if find_by_name(data, name):
-        return False, f"'{name}'은(는) 이미 장보기 리스트에 있어요."
+        return False, f"'{name}'은(는) 이미 장바구니에 있어요."
     data["items"].append(
         {
             "id": uuid.uuid4().hex,
@@ -87,7 +87,7 @@ def add_item(data, name, quantity, unit, source=SOURCE_MANUAL):
         }
     )
     save(data)
-    return True, f"'{name}'을(를) 장보기 리스트에 담았어요."
+    return True, f"'{name}'을(를) 장바구니에 담았어요."
 
 
 def set_checked(data, item_id, checked):
@@ -114,7 +114,7 @@ def unchecked_count(data):
 
 
 # ---------------------------------------------------------------
-# "다시 살까요?" 추천 목록
+# "다시 사기" 추천 목록
 # ---------------------------------------------------------------
 def mark_handled(data, keys):
     """추천 항목에 [담기]/[안 살래요]를 눌렀다고 기억한다. 다시 추천하지 않는다."""

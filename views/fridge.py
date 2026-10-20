@@ -398,16 +398,16 @@ def item_dialog(item_id):
 # 3) "장보기 리스트에 추가할까요?" 팝업 (소진·폐기 뒤)
 # ---------------------------------------------------------------
 def close_rebuy():
-    """✕로 닫으면 묻지 않은 것으로 둔다. (장보기의 '다시 살까요?'에 그대로 남는다)"""
+    """✕로 닫으면 묻지 않은 것으로 둔다. (장보기의 '다시 사기'에 그대로 남는다)"""
     state.rebuy = None
 
 
 def answer_rebuy(buy, quantity=1.0):
     """[추가]면 고른 수량으로 장보기 리스트에 담는다. (단위는 냉장고에 있던 단위)
-    어느 쪽이든 장보기의 '다시 살까요?'에는 다시 나오지 않게 한다."""
+    어느 쪽이든 장보기의 '다시 사기'에는 다시 나오지 않게 한다."""
     info = state.rebuy
     data = shop.load()
-    result = (True, f"{info['message']} 장보기에는 추가하지 않았어요.")
+    result = (True, f"{info['message']} 장바구니에는 담지 않았어요.")
     if buy:
         ok, message = shop.add_item(data, info["name"], quantity, info["unit"], info["source"])
         result = (ok, f"{info['message']} {message}")
@@ -421,7 +421,7 @@ def answer_rebuy(buy, quantity=1.0):
 def rebuy_dialog():
     info = state.rebuy
     st.write(info["message"])
-    st.markdown(f"**'{info['name']}'을(를) 장보기 리스트에 추가할까요?**")
+    st.markdown(f"**'{info['name']}'을(를) 장바구니에 담을까요?**")
     # 담을 수량 (단위는 냉장고에 있던 단위 그대로)
     quantity = st.number_input(
         f"수량 ({info['unit']})", min_value=0.1, value=1.0, step=1.0, format="%g", key="rebuy_qty"
@@ -521,7 +521,7 @@ def multi_dialog():
 
 
 def close_bulk_rebuy():
-    """✕로 닫으면 묻지 않은 것으로 둔다. (장보기의 '다시 살까요?'에 그대로 남는다)"""
+    """✕로 닫으면 묻지 않은 것으로 둔다. (장보기의 '다시 사기'에 그대로 남는다)"""
     state.bulk_rebuy = None
 
 
@@ -530,7 +530,7 @@ def bulk_rebuy_dialog():
     """여러 재료 사용으로 다 쓴 재료들을 장보기에 담을지 한 번에 묻는다."""
     info = state.bulk_rebuy
     st.write(info["message"])
-    st.markdown("**다 쓴 재료를 장보기 리스트에 추가할까요?**")
+    st.markdown("**다 쓴 재료를 장바구니에 담을까요?**")
     picks = []
     for gone in info["items"]:
         col_check, col_qty = st.columns([1.4, 1], vertical_alignment="center")
@@ -551,11 +551,11 @@ def bulk_rebuy_dialog():
             for gone, quantity in picks:
                 ok, _ = shop.add_item(data, gone["name"], quantity, gone["unit"], shop.SOURCE_USED)
                 (added if ok else already).append(gone["name"])
-        # 물어본 재료는 장보기의 '다시 살까요?'에 다시 나오지 않게 한다.
+        # 물어본 재료는 장보기의 '다시 사기'에 다시 나오지 않게 한다.
         shop.mark_handled(data, [f"used:{gone['item_id']}" for gone in info["items"]])
         message = info["message"]
         if added:
-            message += f" 🛒 장보기에 담았어요: {', '.join(added)}"
+            message += f" 🛒 장바구니에 담았어요: {', '.join(added)}"
         if already:
             message += f" (이미 있음: {', '.join(already)})"
         state.bulk_rebuy = None

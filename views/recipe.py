@@ -80,12 +80,12 @@ def add_missing(names):
     """고른 부족한 재료를 장보기 리스트에 담는다."""
     data = shop.load()
     added, skipped = [], []
-    with st.spinner("장보기에 담는 중..."):
+    with st.spinner("장바구니에 담는 중..."):
         for name in names:
             unit = classifier.classify(name)["unit"]  # 재료에 맞는 단위 (목록·캐시·AI)
             ok, _ = shop.add_item(data, name, 1.0, unit, shop.SOURCE_RECIPE)
             (added if ok else skipped).append(name)
-    message = f"🛒 장보기에 담았어요: {', '.join(added)}" if added else ""
+    message = f"🛒 장바구니에 담았어요: {', '.join(added)}" if added else ""
     if skipped:
         message += f" (이미 있음: {', '.join(skipped)})"
     state.flash = (bool(added), message.strip())
@@ -123,13 +123,13 @@ def render_card(index, pick):
                 st.markdown(f"**부족한 재료:** {', '.join(pick['missing'])}")
                 if to_buy:
                     chosen = st.multiselect(
-                        "장보기에 담을 재료", to_buy, default=to_buy,
+                        "장바구니에 담을 재료", to_buy, default=to_buy,
                         key=f"recipe_missing_{index}_{recipe['name']}", label_visibility="collapsed",
                     )
-                    if st.button("장보기에 담기", key=f"recipe_add_{index}_{recipe['name']}", disabled=not chosen):
+                    if st.button("장바구니에 담기", key=f"recipe_add_{index}_{recipe['name']}", disabled=not chosen):
                         add_missing(chosen)
                 else:
-                    st.caption("🛒 모두 장보기 리스트에 있어요.")
+                    st.caption("🛒 모두 장바구니에 있어요.")
 
         with st.expander("조리 순서"):
             for step in recipe["steps"]:
