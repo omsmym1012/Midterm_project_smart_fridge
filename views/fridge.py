@@ -302,6 +302,8 @@ def ask_rebuy(item, result, source):
         "source": source, "message": message,
         "gone": item["status"] == store.STATUS_USED,  # 재료가 냉장고에서 없어졌는지
     }
+    # 이전 팝업에서 고른 수량이 남지 않게 지운다. (새 팝업은 1부터 시작)
+    state.pop("rebuy_qty", None)
     close_dialogs()
     st.rerun()
 
@@ -389,13 +391,14 @@ def close_rebuy():
     state.rebuy = None
 
 
-def answer_rebuy(buy):
-    """[추가]면 장보기 리스트에 담는다. 어느 쪽이든 장보기의 '다시 살까요?'에는 다시 나오지 않게 한다."""
+def answer_rebuy(buy, quantity=1.0):
+    """[추가]면 고른 수량으로 장보기 리스트에 담는다. (단위는 냉장고에 있던 단위)
+    어느 쪽이든 장보기의 '다시 살까요?'에는 다시 나오지 않게 한다."""
     info = state.rebuy
     data = shop.load()
     result = (True, f"{info['message']} 장보기에는 추가하지 않았어요.")
     if buy:
-        ok, message = shop.add_item(data, info["name"], 1.0, info["unit"], info["source"])
+        ok, message = shop.add_item(data, info["name"], quantity, info["unit"], info["source"])
         result = (ok, f"{info['message']} {message}")
     if info["gone"]:
         shop.mark_handled(data, [f"used:{info['item_id']}"])
@@ -408,9 +411,13 @@ def rebuy_dialog():
     info = state.rebuy
     st.write(info["message"])
     st.markdown(f"**'{info['name']}'을(를) 장보기 리스트에 추가할까요?**")
+    # 담을 수량 (단위는 냉장고에 있던 단위 그대로)
+    quantity = st.number_input(
+        f"수량 ({info['unit']})", min_value=0.1, value=1.0, step=1.0, format="%g", key="rebuy_qty"
+    )
     col_yes, col_no = st.columns(2)
     if col_yes.button("추가", type="primary", width="stretch"):
-        answer_rebuy(True)
+        answer_rebuy(True, quantity)
         st.rerun()
     if col_no.button("추가 안 함", width="stretch"):
         answer_rebuy(False)

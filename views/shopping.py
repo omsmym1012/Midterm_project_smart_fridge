@@ -1,6 +1,6 @@
 """🛒 장보기 페이지
 
-1) 다시 살까요?  : 다 쓴 재료·기한 지난/임박 재료 추천 → [담기] / [안 살래요]
+1) 다시 살까요?  : 소진·폐기한 재료, 기한 지난/임박 재료 추천 → 수량 정하고 [담기] / [안 살래요]
 2) 직접 추가     : 이름·수량·단위를 입력해서 담기
 3) 장보기 리스트 : 이름 오른쪽 체크박스로 구매 체크, 삭제
 4) 산 재료 정리  : 체크한 항목을 표에서 확인하고 한 번에 냉장고에 넣기
@@ -58,51 +58,28 @@ if "flash" in st.session_state:
 st.subheader("🔁 다시 살까요?")
 candidates = shop.candidates(fridge_items, data)
 
-# 기한 지난 재료의 [담기]를 누르면 "버릴까요?" 확인 창을 연다. 어떤 후보인지 기억해 둔다.
-st.session_state.setdefault("shop_discard_ask", None)
-
 if not candidates:
     st.caption("추천할 재료가 없어요.")
 
 for candidate in candidates:
     with st.container(border=True):
-        col_name, col_add, col_skip = st.columns([4, 1, 1.3])
+        col_name, col_qty, col_add, col_skip = st.columns([3, 1.6, 1, 1.3], vertical_alignment="bottom")
         col_name.markdown(f"**{candidate['name']}**")
         col_name.caption(candidate["detail"])
         key = candidate["keys"][0]  # 버튼 key를 구분하기 위한 값
+        # 담을 수량 (단위는 냉장고에 있던 단위 그대로)
+        quantity = col_qty.number_input(
+            f"수량 ({candidate['unit']})", min_value=0.1, value=1.0, step=1.0, format="%g", key=f"cand_qty_{key}"
+        )
 
         if col_add.button("담기", key=f"cand_add_{key}"):
-            if candidate["kind"] == shop.SOURCE_EXPIRED:
-                st.session_state.shop_discard_ask = key  # 버릴지 먼저 묻는다
-                st.rerun()
-            ok, message = shop.add_item(data, candidate["name"], 1.0, candidate["unit"], candidate["kind"])
+            ok, message = shop.add_item(data, candidate["name"], quantity, candidate["unit"], candidate["kind"])
             shop.mark_handled(data, candidate["keys"])
             finish(ok, message)
 
         if col_skip.button("안 살래요", key=f"cand_skip_{key}"):
             shop.mark_handled(data, candidate["keys"])
             finish(True, f"'{candidate['name']}'은(는) 추천에서 뺐어요.")
-
-        # 기한 지난 재료: 냉장고의 지난 묶음도 버릴지 확인
-        if st.session_state.shop_discard_ask == key:
-            st.warning(f"냉장고에 있는 기한 지난 '{candidate['name']}'도 버릴까요?")
-            st.caption(candidate["detail"])
-            col_yes, col_no, col_cancel = st.columns(3)
-            discard = col_yes.button("버리고 담기", key=f"discard_yes_{key}", type="primary")
-            keep = col_no.button("남겨두고 담기", key=f"discard_no_{key}")
-            if col_cancel.button("취소", key=f"discard_cancel_{key}"):
-                st.session_state.shop_discard_ask = None
-                st.rerun()
-            if discard or keep:
-                st.session_state.shop_discard_ask = None
-                handled_keys = list(candidate["keys"])
-                if discard:
-                    fridge_store.discard_batches(fridge_items, candidate["item_id"], candidate["batch_ids"])
-                    # 묶음을 다 버려서 "다 씀"이 됐다면, 그 기록이 다시 추천되지 않게 같이 처리한다.
-                    handled_keys.append(f"used:{candidate['item_id']}")
-                ok, message = shop.add_item(data, candidate["name"], 1.0, candidate["unit"], candidate["kind"])
-                shop.mark_handled(data, handled_keys)
-                finish(ok, message + (" 기한 지난 묶음은 버렸어요." if discard else ""))
 
 
 # ---------------------------------------------------------------
