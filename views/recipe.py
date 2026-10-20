@@ -1,6 +1,6 @@
 """🍳 요리 추천 페이지
 
-[추천 받기]를 누르면 냉장고 재료로 만들 수 있는 요리 3개를 보여 준다.
+쓰고 싶은 재료를 고르고(처음에는 유통기한 3일 이내 재료) [추천 받기]를 누르면 요리 3개를 보여 준다.
 - 식품안전나라 레시피에서 먼저 고르고, 모자라면 AI로 채운다. (recipe_store.recommend)
 - 부족한 재료는 골라서 장보기 리스트에 담을 수 있다.
 """
@@ -25,12 +25,25 @@ if not fridge:
     st.info("요리에 쓸 재료가 없어요. 냉장고에 재료를 먼저 추가해 주세요.")
     st.stop()
 
-soon = [f["name"] for f in fridge if f["soon"]]
-if soon:
-    st.caption(f"🟠 먼저 쓸 재료: {', '.join(soon)}")
-
 # 추천 결과는 화면이 다시 그려져도 유지되도록 session_state에 둔다.
 state = st.session_state
+
+# 쓰고 싶은 재료 고르기: 처음에는 유통기한 3일 이내 재료가 골라져 있다.
+names = [f["name"] for f in fridge]
+dday = {f["name"]: f["dday"] for f in fridge}
+soon_names = [f["name"] for f in fridge if f["soon"]]
+if "recipe_chosen" in state:
+    # 냉장고에서 빠진 재료는 선택에서도 뺀다. (없는 선택지가 남아 있으면 오류가 난다)
+    state.recipe_chosen = [n for n in state.recipe_chosen if n in names]
+else:
+    state.recipe_chosen = soon_names
+st.multiselect(
+    "쓰고 싶은 재료",
+    names,
+    key="recipe_chosen",
+    format_func=lambda n: f"{'🟠 ' if n in soon_names else ''}{n} ({dday[n]})",
+    placeholder="고르지 않으면 냉장고 재료 전체로 추천해요",
+)
 state.setdefault("recipe_picks", None)
 state.setdefault("recipe_notice", None)
 state.setdefault("recipe_seen_ids", [])     # 이미 보여 준 레시피 (다른 요리 보기에서 제외)
@@ -42,7 +55,9 @@ def run_recommend(more=False):
     if not more:
         state.recipe_seen_ids, state.recipe_seen_names = [], []
     with st.spinner("요리를 찾는 중... (처음에는 레시피를 받느라 조금 걸려요)"):
-        picks, notice = recipe_store.recommend(items, state.recipe_seen_ids, state.recipe_seen_names)
+        picks, notice = recipe_store.recommend(
+            items, state.recipe_chosen, state.recipe_seen_ids, state.recipe_seen_names
+        )
     state.recipe_picks, state.recipe_notice = picks, notice
     state.recipe_seen_ids += [p["recipe"]["id"] for p in picks if p["recipe"]["id"]]
     state.recipe_seen_names += [p["recipe"]["name"] for p in picks]
@@ -96,7 +111,8 @@ def render_card(index, pick):
                 st.caption(recipe["tip"])
 
             # 쓰는 냉장고 재료 (임박 재료는 주황색 배지)
-            uses = [f":orange-badge[{n}]" if n in pick["soon"] else n for n in pick["uses"]]
+            # 쓰고 싶은 재료로 고른 것은 주황색 배지로 강조한다.
+            uses = [f":orange-badge[{n}]" if n in pick["picked"] else n for n in pick["uses"]]
             st.markdown(f"**냉장고 재료:** {', '.join(uses) or '없음'}")
 
             listed = [m for m in pick["missing"] if shop.find_by_name(shop.load(), m)]

@@ -3,7 +3,8 @@
 1) 식품안전나라 "조리식품의 레시피 DB"(COOKRCP01)를 한 번에 받아 data/recipes.json에 저장한다.
    (일주일이 지나면 새로 받는다. 받기에 실패하면 예전에 받은 것을 그대로 쓴다.)
 2) 냉장고 재료와 레시피 재료를 비교해서 점수를 매긴다.
-   - 유통기한 임박(3일 이내) 재료를 쓰는 레시피를 우선
+   - 사용자가 고른 "쓰고 싶은 재료"(처음에는 유통기한 3일 이내 재료)를 1개 이상 쓰는 레시피만,
+     많이 쓸수록 앞으로
    - 냉장고 재료를 많이 쓰고, 부족한 재료가 적을수록 앞으로
    - 기한 지난 재료는 없는 것으로 본다.
 3) 냉장고 재료를 2가지 이상 쓰는 레시피가 3개가 안 되면, 모자란 만큼 AI에게 요리를 추천받는다.
@@ -208,16 +209,19 @@ def usable_items(items):
         alive = [b for b in item["batches"] if fridge_store.expiry_status(b["expiry"]) != fridge_store.STATUS_EXPIRED]
         if alive:
             soon = any(fridge_store.expiry_status(b["expiry"]) == fridge_store.STATUS_SOON for b in alive)
-            result.append({"name": item["name"], "soon": soon})
+            label = fridge_store.d_day_label(fridge_store.earliest_batch({"batches": alive})["expiry"])
+            # pick: 이번 추천에서 꼭 쓰고 싶은 재료인지 (recommend에서 사용자 선택으로 채운다)
+            result.append({"name": item["name"], "soon": soon, "dday": label, "pick": soon})
     return result
 
 
 def score_recipe(recipe, fridge):
     """레시피 하나를 냉장고 재료와 비교한다.
 
-    반환: {"recipe", "uses": [냉장고 재료], "soon": [그중 임박 재료], "missing": [부족한 재료], "basic": [기본 양념]}
+    반환: {"recipe", "uses": [냉장고 재료], "picked": [그중 쓰고 싶은 재료], "soon": [그중 임박 재료],
+           "missing": [부족한 재료], "basic": [기본 양념]}
     """
-    uses, soon, missing, basic = [], [], [], []
+    uses, picked, soon, missing, basic = [], [], [], [], []
     for ingredient in recipe["ingredients"]:
         # 기본 양념은 먼저 걸러 낸다. (냉장고에 간장·소금이 있다고 "알맞은 레시피"가 되지 않게)
         if _is_basic(ingredient):
@@ -229,20 +233,27 @@ def score_recipe(recipe, fridge):
                 uses.append(found["name"])
                 if found["soon"]:
                     soon.append(found["name"])
+                if found["pick"]:
+                    picked.append(found["name"])
         else:
             missing.append(ingredient)
-    return {"recipe": recipe, "uses": uses, "soon": soon, "missing": missing, "basic": basic, "source": "api"}
+    return {
+        "recipe": recipe, "uses": uses, "picked": picked, "soon": soon,
+        "missing": missing, "basic": basic, "source": "api",
+    }
 
 
 def recommend_from_recipes(recipes, fridge, exclude_ids=()):
-    """알맞은 레시피(냉장고 재료 2가지 이상)를 점수 순으로 골라 최대 3개 돌려준다.
+    """알맞은 레시피를 점수 순으로 골라 최대 3개 돌려준다.
 
+    알맞은 레시피: 냉장고 재료를 2가지 이상 쓰고, 쓰고 싶은 재료를 골랐다면 그중 1개 이상을 쓰는 것
     exclude_ids: 이미 보여 준 레시피 id ("다른 요리 보기"에서 겹치지 않게)
     """
+    need_pick = any(f["pick"] for f in fridge)
     scored = [score_recipe(r, fridge) for r in recipes if r["id"] not in exclude_ids]
-    good = [s for s in scored if len(s["uses"]) >= MIN_FRIDGE_MATCH]
-    # 정렬 순서: 임박 재료를 많이 쓸수록 → 냉장고 재료를 많이 쓸수록 → 부족한 재료가 적을수록
-    good.sort(key=lambda s: (-len(s["soon"]), -len(s["uses"]), len(s["missing"])))
+    good = [s for s in scored if len(s["uses"]) >= MIN_FRIDGE_MATCH and (s["picked"] or not need_pick)]
+    # 정렬 순서: 쓰고 싶은 재료를 많이 쓸수록 → 임박 재료를 많이 쓸수록 → 냉장고 재료를 많이 쓸수록 → 부족한 재료가 적을수록
+    good.sort(key=lambda s: (-len(s["picked"]), -len(s["soon"]), -len(s["uses"]), len(s["missing"])))
     return good[:RECOMMEND_COUNT]
 
 
@@ -254,13 +265,14 @@ def recommend_from_ai(fridge, count, avoid_names=()):
     if count <= 0 or not fridge:
         return []
     soon = [f["name"] for f in fridge if f["soon"]]
+    picks = [f["name"] for f in fridge if f["pick"]]
     fridge_names = [f["name"] for f in fridge]
     prompt = (
         "자취생 1인분 집밥 요리를 추천해 주세요.\n"
         f"냉장고 재료: {', '.join(fridge_names)}\n"
-        f"유통기한이 3일 이내라 먼저 써야 하는 재료: {', '.join(soon) or '없음'}\n"
+        f"꼭 쓰고 싶은 재료: {', '.join(picks) or '없음'}\n"
         f"이미 추천한 요리(제외): {', '.join(avoid_names) or '없음'}\n"
-        f"먼저 써야 하는 재료를 우선 쓰고, 냉장고 재료를 최대한 활용하는 요리 {count}개를 골라 주세요.\n"
+        f"꼭 쓰고 싶은 재료를 1개 이상(많을수록 좋음) 쓰고, 냉장고 재료를 최대한 활용하는 요리 {count}개를 골라 주세요.\n"
         "uses는 위 냉장고 재료 이름 중 실제로 쓰는 것만 그대로 적고, "
         "missing은 더 사야 하는 재료(소금·간장 같은 기본 양념 제외)입니다. "
         "steps는 짧은 조리 순서 3~6단계입니다.\n"
@@ -288,6 +300,7 @@ def recommend_from_ai(fridge, count, avoid_names=()):
                         "tip": str(dish.get("description", "")).strip(),
                     },
                     "uses": uses,
+                    "picked": [n for n in uses if n in picks],
                     "soon": [n for n in uses if n in soon],
                     "missing": [str(n) for n in dish.get("missing", []) if str(n).strip()],
                     "basic": [],
@@ -299,13 +312,18 @@ def recommend_from_ai(fridge, count, avoid_names=()):
     return ai_client.ask_json(prompt, validate=check, total_timeout=60) or []
 
 
-def recommend(items, exclude_ids=(), avoid_names=()):
+def recommend(items, chosen=None, exclude_ids=(), avoid_names=()):
     """요리 추천 전체 흐름. 반환: (추천 목록, 안내 메시지 또는 None)
+
+    chosen: 사용자가 고른 "쓰고 싶은 재료" 이름들. None이면 유통기한 3일 이내 재료를 쓴다.
 
     레시피 DB에서 먼저 고르고, 3개가 안 되면 AI로 채운다.
     레시피 DB를 못 쓰면(인증키 없음 등) AI만으로 추천하고 그 이유를 알려 준다.
     """
     fridge = usable_items(items)
+    if chosen is not None:
+        for f in fridge:
+            f["pick"] = f["name"] in chosen
     notice = None
     try:
         picks = recommend_from_recipes(load_recipes(), fridge, exclude_ids)
