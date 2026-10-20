@@ -42,6 +42,10 @@ state.setdefault("action", None)       # 예: {"kind": "use", "item_id": "...", 
 state.setdefault("dialog_item", None)  # 상세 팝업이 열린 재료 id
 state.setdefault("add_open", False)    # 재료 추가 팝업이 열려 있는지
 state.setdefault("rebuy", None)        # 장보기에 추가할지 묻는 중인 재료 정보
+state.setdefault("multi_mode", False)   # 여러 재료 사용: 칸 그림에서 재료를 고르는 중인지
+state.setdefault("multi_selected", [])  # 여러 재료 사용: 고른 재료 id들
+state.setdefault("multi_open", False)   # 여러 재료 사용: 쓰는 양 입력 팝업이 열려 있는지
+state.setdefault("bulk_rebuy", None)    # 여러 재료 사용 후 소진된 재료들 (장보기에 담을지 한 번에 묻기)
 
 
 def open_action(kind, item_id, batch_id=None):
@@ -78,6 +82,7 @@ def close_dialogs():
     """팝업과 그 안의 입력창을 닫는다. (팝업 ✕를 눌렀을 때도 실행)"""
     state.dialog_item = None
     state.add_open = False
+    state.multi_open = False
     close_action()
 
 
@@ -431,17 +436,148 @@ def rebuy_dialog():
 
 
 # ---------------------------------------------------------------
-# 4) 맨 위: 상태별 개수 + [+ 재료 추가]
+# 4) 여러 재료 사용
+#   [여러 재료 사용] → 칸 그림에서 재료를 눌러 고르기 → [완료]
+#   → 재료마다 쓰는 양 입력 팝업 → [사용하기]
+#   → 남은 양이 0이 된 재료가 있으면 장보기에 담을지 한 번에 묻는 팝업
 # ---------------------------------------------------------------
-col_summary, col_add = st.columns([4, 1.3], vertical_alignment="center")
-col_summary.markdown(summary_badges())
+def clear_keys(prefix):
+    """이전 팝업에서 입력한 값이 남지 않게, 이름이 prefix로 시작하는 입력칸 값을 지운다."""
+    for key in [k for k in state.keys() if str(k).startswith(prefix)]:
+        del state[key]
+
+
+def start_multi():
+    close_dialogs()
+    state.multi_mode = True
+    state.multi_selected = []
+
+
+def cancel_multi():
+    state.multi_mode = False
+    state.multi_selected = []
+
+
+def finish_select():
+    """[완료]: 쓰는 양 입력 팝업을 연다."""
+    clear_keys("multi_amt_")
+    state.multi_open = True
+
+
+def on_toggle():
+    """선택 모드에서 재료를 누르면 고른 목록에 넣거나 뺀다."""
+    item_id = (state.get(BOARD_KEY) or {}).get("toggle")
+    if not item_id:
+        return
+    if item_id in state.multi_selected:
+        state.multi_selected = [i for i in state.multi_selected if i != item_id]
+    else:
+        state.multi_selected = state.multi_selected + [item_id]
+
+
+@st.dialog("여러 재료 사용", on_dismiss=close_dialogs)
+def multi_dialog():
+    """고른 재료마다 쓰는 양을 입력하고 한 번에 사용한다. (0이면 그 재료는 쓰지 않음)"""
+    chosen = [i for i in store.fridge_items_sorted(items) if i["id"] in state.multi_selected]
+    if not chosen:
+        st.info("고른 재료가 없어요.")
+        return
+    amounts = {}
+    for item in chosen:
+        total = store.total_quantity(item)
+        first = store.earliest_batch(item)
+        col_name, col_amount = st.columns([1.4, 1], vertical_alignment="center")
+        col_name.markdown(
+            f"**{item['name']}** {expiry_badge(first['expiry'])}  \n"
+            f"남은 양 {store.format_quantity(total, item['unit'])}"
+        )
+        amounts[item["id"]] = col_amount.number_input(
+            f"쓰는 양 ({item['unit']})", min_value=0.0, max_value=float(total),
+            value=float(min(1.0, total)), step=1.0, format="%g", key=f"multi_amt_{item['id']}",
+        )
+
+    if st.button("사용하기", type="primary", width="stretch"):
+        used, gone = [], []
+        for item in chosen:
+            amount = amounts[item["id"]]
+            if amount <= 0:
+                continue
+            ok, _ = store.use_quantity(items, item["id"], amount)
+            if ok:
+                used.append(f"{item['name']} {store.format_quantity(amount, item['unit'])}")
+                if item["status"] == store.STATUS_USED:
+                    gone.append({"item_id": item["id"], "name": item["name"], "unit": item["unit"]})
+        state.multi_mode = False
+        state.multi_selected = []
+        close_dialogs()
+        message = f"사용했어요: {', '.join(used)}." if used else "사용한 재료가 없어요."
+        if gone:
+            # 다 쓴 재료가 있으면 장보기에 담을지 한 번에 묻는다.
+            clear_keys("bulk_")
+            state.bulk_rebuy = {"items": gone, "message": message}
+        else:
+            state.flash = (bool(used), message)
+        st.rerun()
+
+
+def close_bulk_rebuy():
+    """✕로 닫으면 묻지 않은 것으로 둔다. (장보기의 '다시 살까요?'에 그대로 남는다)"""
+    state.bulk_rebuy = None
+
+
+@st.dialog("🛒 장보기", on_dismiss=close_bulk_rebuy)
+def bulk_rebuy_dialog():
+    """여러 재료 사용으로 다 쓴 재료들을 장보기에 담을지 한 번에 묻는다."""
+    info = state.bulk_rebuy
+    st.write(info["message"])
+    st.markdown("**다 쓴 재료를 장보기 리스트에 추가할까요?**")
+    picks = []
+    for gone in info["items"]:
+        col_check, col_qty = st.columns([1.4, 1], vertical_alignment="center")
+        if col_check.checkbox(gone["name"], value=True, key=f"bulk_chk_{gone['item_id']}"):
+            quantity = col_qty.number_input(
+                f"수량 ({gone['unit']})", min_value=0.1, value=1.0, step=1.0, format="%g",
+                key=f"bulk_qty_{gone['item_id']}",
+            )
+            picks.append((gone, quantity))
+
+    col_yes, col_no = st.columns(2)
+    add = col_yes.button("추가", type="primary", width="stretch", disabled=not picks)
+    skip = col_no.button("추가 안 함", width="stretch")
+    if add or skip:
+        data = shop.load()
+        added, already = [], []
+        if add:
+            for gone, quantity in picks:
+                ok, _ = shop.add_item(data, gone["name"], quantity, gone["unit"], shop.SOURCE_USED)
+                (added if ok else already).append(gone["name"])
+        # 물어본 재료는 장보기의 '다시 살까요?'에 다시 나오지 않게 한다.
+        shop.mark_handled(data, [f"used:{gone['item_id']}" for gone in info["items"]])
+        message = info["message"]
+        if added:
+            message += f" 🛒 장보기에 담았어요: {', '.join(added)}"
+        if already:
+            message += f" (이미 있음: {', '.join(already)})"
+        state.bulk_rebuy = None
+        state.flash = (True, message)
+        st.rerun()
+
+
+# ---------------------------------------------------------------
+# 5) 맨 위: 상태별 개수 + [+ 재료 추가] [여러 재료 사용]
+# ---------------------------------------------------------------
 def open_add_dialog():
     close_dialogs()
+    cancel_multi()
     state.pop("add_msg", None)
     state.add_open = True
 
 
-col_add.button("＋ 재료 추가", type="primary", width="stretch", on_click=open_add_dialog)
+# 오른쪽 칸에 [＋ 재료 추가]와 그 아래 [여러 재료 사용]을 세로로 놓는다.
+col_summary, col_buttons = st.columns([4, 1.5], vertical_alignment="center")
+col_summary.markdown(summary_badges())
+col_buttons.button("＋ 재료 추가", type="primary", width="stretch", on_click=open_add_dialog)
+col_buttons.button("여러 재료 사용", width="stretch", on_click=start_multi, disabled=state.multi_mode)
 
 # 직전 작업의 결과 메시지 표시 (한 번 보여 주고 지운다)
 if "flash" in state:
@@ -450,7 +586,7 @@ if "flash" in state:
 
 
 # ---------------------------------------------------------------
-# 5) 냉장고 칸 그림
+# 6) 냉장고 칸 그림
 # 재료를 끌어서 놓으면 on_move, 누르면 on_select가 페이지를 다시 그리기 전에 실행된다.
 # ---------------------------------------------------------------
 BOARD_KEY = "fridge_board"
@@ -474,12 +610,30 @@ def on_select():
 if not store.fridge_items_sorted(items):
     st.info("냉장고가 비어 있어요. '＋ 재료 추가'로 재료를 넣어 보세요.")
 else:
-    st.caption("재료를 누르면 사용·소진·폐기, 끌면 칸을 옮길 수 있어요.")
-    fridge_board(items, key=BOARD_KEY, on_move=on_move, on_select=on_select)
+    if state.multi_mode:
+        # 선택 모드: 안내 + [완료] [취소]
+        alive = {i["id"] for i in store.fridge_items_sorted(items)}
+        state.multi_selected = [i for i in state.multi_selected if i in alive]
+        col_info, col_done, col_cancel = st.columns([3.2, 1, 1], vertical_alignment="center")
+        col_info.info(f"사용할 재료를 눌러 고르세요. ({len(state.multi_selected)}개 선택)")
+        col_done.button(
+            "완료", type="primary", width="stretch", on_click=finish_select, disabled=not state.multi_selected
+        )
+        col_cancel.button("취소", width="stretch", on_click=cancel_multi)
+    else:
+        st.caption("재료를 누르면 사용·소진·폐기, 끌면 칸을 옮길 수 있어요.")
+    fridge_board(
+        items, key=BOARD_KEY, on_move=on_move, on_select=on_select,
+        on_toggle=on_toggle, select_mode=state.multi_mode, selected=state.multi_selected,
+    )
 
 # 열려 있어야 하는 팝업을 연다. (한 번에 하나만)
 if state.rebuy:
     rebuy_dialog()
+elif state.bulk_rebuy:
+    bulk_rebuy_dialog()
+elif state.multi_open:
+    multi_dialog()
 elif state.add_open:
     add_dialog()
 elif state.dialog_item:

@@ -8,6 +8,7 @@ HTML·CSS·JavaScript를 직접 넣은 작은 컴포넌트를 만든다.
 - 재료를 마우스(또는 손가락)로 잡으면 추천 칸 색이 연하게 바뀌고,
   다른 칸에 놓으면 Python으로 {"item_id", "zone"}을 보낸다. ("move" 이벤트)
 - 끌지 않고 누르기만 하면 재료 id를 보낸다. ("select" 이벤트 → 상세 팝업)
+- 선택 모드(여러 재료 사용)에서는 끌기를 끄고, 누를 때마다 재료 id를 보낸다. ("toggle" 이벤트)
 """
 
 import streamlit as st
@@ -86,6 +87,10 @@ CSS = """
     cursor: grabbing;
 }
 .fb-placeholder { opacity: 0.35; }
+
+/* 선택 모드: 고른 재료는 파란 테두리와 ✓ 표시 */
+.fb-chip.fb-selected { outline: 3px solid #3b82f6; background: rgba(59, 130, 246, 0.15); }
+.fb-chip.fb-selected .fb-name::before { content: "✓ "; color: #3b82f6; font-weight: 700; }
 """
 
 # 컴포넌트 동작
@@ -155,11 +160,23 @@ export default function (component) {
         });
     }
 
+    const selectMode = !!data.selectMode;           // 선택 모드(여러 재료 사용)인지
+    const selected = new Set(data.selected || []);  // 선택 모드에서 고른 재료 id들
+
     function makeChip(item) {
         const chip = el("div", "fb-chip fb-" + item.status);
+        if (selected.has(item.id)) chip.classList.add("fb-selected");
         chip.append(el("span", "fb-name", item.name), el("span", "fb-meta", item.meta));
         chip.title = "추천 칸: " + titles[item.recommend];
 
+        if (selectMode) {
+            // 선택 모드: 끌기 없이 누를 때마다 선택/해제. 화면에서 먼저 바꿔 두고 Python에 알린다.
+            chip.addEventListener("click", () => {
+                chip.classList.toggle("fb-selected");
+                setTriggerValue("toggle", item.id);
+            });
+            return chip;
+        }
         chip.addEventListener("pointerenter", () => { if (!dragging) setRecommend(item.recommend, true); });
         chip.addEventListener("pointerleave", () => { if (!dragging) setRecommend(item.recommend, false); });
         chip.addEventListener("pointerdown", (event) => startDrag(event, chip, item));
@@ -270,11 +287,20 @@ def _board_data(items):
     return {"zones": store.ZONES, "items": data_items}
 
 
-def fridge_board(items, key, on_move, on_select):
+def fridge_board(items, key, on_move, on_select, on_toggle=None, select_mode=False, selected=()):
     """냉장고 칸 화면을 그린다.
 
     재료를 다른 칸에 놓으면 on_move, 누르면 on_select가 화면을 다시 그리기 전에 먼저 실행된다.
     그 안에서 st.session_state[key]["move"]로 {"item_id", "zone"}을,
     st.session_state[key]["select"]로 누른 재료 id를 읽을 수 있다.
+
+    select_mode=True(여러 재료 사용)이면 끌기를 끄고, 누를 때마다 on_toggle이 실행된다.
+    (st.session_state[key]["toggle"]에 누른 재료 id) selected: 지금 골라 둔 재료 id들
     """
-    _board(data=_board_data(items), key=key, on_move_change=on_move, on_select_change=on_select)
+    data = _board_data(items)
+    data["selectMode"] = select_mode
+    data["selected"] = list(selected)
+    _board(
+        data=data, key=key,
+        on_move_change=on_move, on_select_change=on_select, on_toggle_change=on_toggle or (lambda: None),
+    )

@@ -1,14 +1,11 @@
 """🛒 장보기 페이지
 
-1) 다시 살까요?  : 소진·폐기한 재료, 기한 지난/임박 재료를 표로 보여 주고, 고른 것만 한 번에 담기 / 안 살래요
+1) 다시 살까요?  : 소진·폐기한 재료, 기한 지난/임박 재료를 한 줄씩 보여 주고, 고른 것만 한 번에 담기 / 안 살래요
 2) 직접 추가     : 이름·수량·단위를 입력해서 담기
 3) 장보기 리스트 : 이름 오른쪽 체크박스로 구매 체크, 삭제
-4) 산 재료 정리  : 체크한 항목을 표에서 확인하고 한 번에 냉장고에 넣기
+4) 산 재료 정리  : 체크한 항목의 수량·유통기한을 확인하고 한 번에 냉장고에 넣기
 """
 
-import hashlib
-
-import pandas as pd
 import streamlit as st
 
 import classifier
@@ -61,39 +58,29 @@ st.subheader(f"🔁 다시 살까요? ({len(candidates)})" if candidates else "�
 if not candidates:
     st.caption("추천할 재료가 없어요.")
 else:
-    # 후보를 표 한 줄씩 보여 주고, 고른 것만 한 번에 담거나 뺀다.
-    # 표의 "담을 수량"은 고칠 수 있고, 단위는 냉장고에 있던 단위로 고정이다.
-    cand_table = pd.DataFrame(
-        {
-            "선택": [False] * len(candidates),
-            "이름": [c["name"] for c in candidates],
-            "이유": [c["detail"] for c in candidates],
-            "수량": [1.0] * len(candidates),
-            "단위": [c["unit"] for c in candidates],
-        }
-    )
-    # 후보가 바뀌면 표를 새로 만들도록 key에 후보 목록을 반영한다.
-    cand_key = "cand_editor_" + hashlib.md5("".join(c["keys"][0] for c in candidates).encode()).hexdigest()[:8]
-    cand_edited = st.data_editor(
-        cand_table,
-        key=cand_key,
-        hide_index=True,
-        width="stretch",
-        column_config={
-            "선택": st.column_config.CheckboxColumn("선택", width="small"),
-            "이름": st.column_config.TextColumn("이름", disabled=True),
-            "이유": st.column_config.TextColumn("이유", disabled=True),
-            "수량": st.column_config.NumberColumn("수량", min_value=0.1, step=1.0, format="%g", width="small"),
-            "단위": st.column_config.TextColumn("단위", disabled=True, width="small"),
-        },
-    )
-    chosen = [(c, row) for c, (_, row) in zip(candidates, cand_edited.iterrows()) if row["선택"]]
+    # 후보를 한 줄씩: [선택] 이름·이유 | 수량 입력칸(−/＋) | 단위
+    # 수량은 칸을 한 번 눌러 바로 고치거나 −/＋로 바꾼다. 단위는 냉장고에 있던 단위로 고정이다.
+    chosen = []
+    for candidate in candidates:
+        key = candidate["keys"][0]  # 입력칸 key를 구분하기 위한 값
+        col_chk, col_name, col_qty, col_unit = st.columns([0.5, 3, 1.6, 0.7], vertical_alignment="center")
+        picked = col_chk.checkbox(
+            f"{candidate['name']} 선택", key=f"cand_chk_{key}", label_visibility="collapsed"
+        )
+        col_name.markdown(f"**{candidate['name']}** :gray[{candidate['detail']}]")
+        quantity = col_qty.number_input(
+            f"{candidate['name']} 수량", min_value=0.1, value=1.0, step=1.0, format="%g",
+            key=f"cand_qty_{key}", label_visibility="collapsed",
+        )
+        col_unit.write(candidate["unit"])
+        if picked:
+            chosen.append((candidate, quantity))
 
     col_add, col_skip, _ = st.columns([1.3, 1.6, 2])
     if col_add.button("고른 재료 담기", type="primary", key="cand_add", disabled=not chosen):
         added, already = [], []
-        for candidate, row in chosen:
-            ok, _ = shop.add_item(data, candidate["name"], float(row["수량"]), candidate["unit"], candidate["kind"])
+        for candidate, quantity in chosen:
+            ok, _ = shop.add_item(data, candidate["name"], quantity, candidate["unit"], candidate["kind"])
             shop.mark_handled(data, candidate["keys"])
             (added if ok else already).append(candidate["name"])
         message = f"🛒 담았어요: {', '.join(added)}" if added else ""
@@ -205,54 +192,45 @@ for item in data["items"]:
 bought = shop.checked_items(data)
 if bought:
     st.subheader("🧾 산 재료 냉장고에 넣기")
-    st.caption(
-        "수량·단위·유통기한을 확인해 주세요. 유통기한을 비워 두면 '기한 없음'으로 들어가요. "
-        "냉장고에 넣지 않을 재료는 '넣기' 체크를 풀어 주세요."
-    )
+    st.caption("유통기한을 비워 두면 '기한 없음'으로 들어가요. 넣지 않을 재료는 체크를 풀어 주세요.")
 
-    # st.data_editor: 엑셀처럼 칸을 직접 고칠 수 있는 표
-    table = pd.DataFrame(
-        {
-            "넣기": [True] * len(bought),
-            "이름": [item["name"] for item in bought],
-            "수량": [float(item["quantity"]) for item in bought],
-            "단위": [item["unit"] for item in bought],
-            # 날짜 칸은 처음에 비워 둔다. (NaT = 날짜 없음)
-            "유통기한": pd.to_datetime(pd.Series([None] * len(bought))),
-        }
-    )
-    # 체크한 항목이 바뀌면 표를 새로 만들도록 key에 항목 id들을 반영한다.
-    editor_key = "shop_editor_" + hashlib.md5("".join(i["id"] for i in bought).encode()).hexdigest()[:8]
-    edited = st.data_editor(
-        table,
-        key=editor_key,
-        hide_index=True,
-        width="stretch",
-        column_config={
-            "넣기": st.column_config.CheckboxColumn("넣기", width="small"),
-            "이름": st.column_config.TextColumn("이름", disabled=True),
-            "수량": st.column_config.NumberColumn("수량", min_value=0.1, step=1.0, format="%g"),
-            "단위": st.column_config.TextColumn("단위", disabled=True),  # 장보기에 담은 단위 그대로
-            "유통기한": st.column_config.DateColumn("유통기한", format="YYYY-MM-DD"),
-        },
-    )
+    # 한 줄씩: [넣기] 이름 | 수량 입력칸 | 단위(고정) | 유통기한 날짜칸
+    rows = []
+    for item in bought:
+        col_chk, col_name, col_qty, col_unit, col_date = st.columns(
+            [0.5, 1.8, 1.6, 0.7, 2], vertical_alignment="center"
+        )
+        put = col_chk.checkbox(
+            f"{item['name']} 넣기", value=True, key=f"buy_chk_{item['id']}", label_visibility="collapsed"
+        )
+        col_name.markdown(f"**{item['name']}**")
+        quantity = col_qty.number_input(
+            f"{item['name']} 수량", min_value=0.1, value=float(item["quantity"]), step=1.0, format="%g",
+            key=f"buy_qty_{item['id']}", label_visibility="collapsed",
+        )
+        col_unit.write(item["unit"])  # 장보기에 담은 단위 그대로
+        # value=None: 처음에는 날짜를 비워 둔다. (비워 두면 기한 없음)
+        expiry = col_date.date_input(
+            f"{item['name']} 유통기한", value=None, key=f"buy_exp_{item['id']}",
+            label_visibility="collapsed", format="YYYY-MM-DD",
+        )
+        rows.append((item, put, quantity, expiry))
 
     if st.button("완료", type="primary", key="shop_done"):
         added, separate, skipped = [], [], []
         with st.spinner("냉장고에 넣는 중..."):
-            for item, (_, row) in zip(bought, edited.iterrows()):
-                if not row["넣기"]:
+            for item, put, quantity, expiry in rows:
+                if not put:
                     skipped.append(item["name"])
                     continue
-                name, unit = item["name"], row["단위"]
-                expiry = None if pd.isna(row["유통기한"]) else row["유통기한"].date()
+                name, unit = item["name"], item["unit"]
                 # 같은 이름이 다른 단위로만 있으면 따로 줄이 생긴다는 걸 알려 주기 위해 미리 확인
                 if fridge_store.find_all_by_name(fridge_items, name) and not fridge_store.find_in_fridge_by_name(
                     fridge_items, name, unit=unit
                 ):
                     separate.append(name)
                 fridge_store.add_item(
-                    fridge_items, name, expiry, float(row["수량"]), unit,
+                    fridge_items, name, expiry, float(quantity), unit,
                     known_info(name), allow_new_unit=True,
                 )
                 added.append(name)
