@@ -36,8 +36,13 @@ BASIC_SEASONINGS = [
     "통깨", "식초", "올리고당", "물엿", "요리당", "고춧가루", "다진마늘", "맛술", "미림", "청주",
 ]
 
-# 같은 재료를 다르게 부르는 이름 (레시피 이름 → 냉장고에서 찾을 이름)
-SYNONYMS = {"달걀": "계란", "계란": "달걀", "쇠고기": "소고기", "소고기": "쇠고기"}
+# 같은 재료로 보는 이름 묶음. 한 묶음 안의 이름은 서로 같은 재료로 비교한다.
+# 예: 냉장고에 "삼겹살"이 있으면 레시피의 "돼지고기"도 있는 것으로 본다. (반대도 마찬가지)
+SAME_GROUPS = [
+    ["계란", "달걀"],
+    ["소고기", "쇠고기"],
+    ["돼지고기", "삼겹살"],
+]
 
 
 class RecipeError(Exception):
@@ -182,13 +187,22 @@ def _norm(name):
     return fridge_store.normalize_name(name)
 
 
+def _aliases(name):
+    """이름과, 같은 재료 묶음(SAME_GROUPS)의 다른 이름들. 예: "한돈삼겹살" → {"한돈삼겹살", "돼지고기", "삼겹살"}"""
+    names = {name}
+    for group in SAME_GROUPS:
+        if any(word in name for word in group):
+            names.update(group)
+    return names
+
+
 def _matches(fridge_name, ingredient):
     """냉장고 재료가 레시피 재료와 같은 것인지 (띄어쓰기 무시, 포함 관계도 인정)
 
-    예: "대파" ↔ "다진 대파", "서울우유" ↔ "우유". 한 글자 이름("무")은 완전히 같을 때만.
+    예: "대파" ↔ "다진 대파", "서울우유" ↔ "우유", "삼겹살" ↔ "돼지고기". 한 글자 이름("무")은 완전히 같을 때만.
     """
     a, b = _norm(fridge_name), _norm(ingredient)
-    for x in {a, _norm(SYNONYMS.get(fridge_name, a))}:
+    for x in _aliases(a):
         if x == b:
             return True
         short, long_ = sorted((x, b), key=len)
