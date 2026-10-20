@@ -26,6 +26,33 @@ DEFAULT_CATEGORY = "기타"
 DEFAULT_STORAGE = "냉장"
 DEFAULT_UNIT = "개"
 
+# 종류별로 흔히 쓰는 단위 (단위를 고를 때 이 목록만 보여 준다)
+UNITS_BY_CATEGORY = {
+    "채소": ["개", "단", "봉지", "팩", "송이", "통", "g", "kg"],
+    "과일": ["개", "팩", "송이", "봉지", "통", "kg", "g"],
+    "육류": ["g", "kg", "팩"],
+    "해산물": ["g", "kg", "개", "팩", "봉지"],
+    "유제품·계란": ["개", "팩", "모", "장", "통", "병", "ml", "L", "g"],
+    "곡류·면": ["개", "봉지", "팩", "kg", "g"],
+    "양념·소스": ["병", "통", "개", "봉지", "g", "ml"],
+    "가공·냉동식품": ["개", "봉지", "팩", "캔", "장", "g"],
+    "밀키트·간편식": ["개", "팩", "봉지"],
+    "음료": ["병", "캔", "팩", "ml", "L"],
+}
+GENERAL_UNITS = ["개", "팩", "봉지", "병", "통", "g", "kg"]  # 종류를 모를 때 ("기타" 포함)
+
+
+def common_units(category, *always):
+    """그 재료에 흔히 쓰는 단위 목록. always로 받은 단위(추천 단위, 냉장고에 있던 단위)는 맨 앞에 꼭 넣는다.
+
+    예: common_units("유제품·계란", "모") → ["모", "개", "팩", "장", "통", "병", "ml", "L", "g"]
+    """
+    units = []
+    for unit in [*always, *UNITS_BY_CATEGORY.get(category, GENERAL_UNITS)]:
+        if unit in UNITS and unit not in units:
+            units.append(unit)
+    return units
+
 # AI 호출(모델 목록·시간 제한)은 ai_client.py에서 함께 관리한다.
 
 # 사용자 수정·AI 결과를 기억해 두는 파일 (.gitignore의 data/*.json에 포함되어 커밋되지 않음)

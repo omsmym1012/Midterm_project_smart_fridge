@@ -112,17 +112,25 @@ else:
 # ---------------------------------------------------------------
 st.subheader("✏️ 직접 추가")
 
-SHOP_ADD_DEFAULTS = {"shop_name": "", "shop_quantity": 1.0, "shop_unit": classifier.DEFAULT_UNIT}
+SHOP_ADD_DEFAULTS = {
+    "shop_name": "", "shop_quantity": 1.0, "shop_unit": classifier.DEFAULT_UNIT,
+    "shop_units": classifier.common_units(None),  # 고를 수 있는 단위 (재료 종류에 흔한 단위만)
+}
 for k, v in SHOP_ADD_DEFAULTS.items():
     st.session_state.setdefault(k, v)
 
 
 def on_shop_name_change():
-    """이름이 바뀌면 추천 단위를 채운다."""
-    name = st.session_state.shop_name.strip()
-    if name:
-        with st.spinner(f"'{name}' 단위 추천 중..."):
-            st.session_state.shop_unit = known_info(name)["unit"]
+    """이름이 바뀌면 추천 단위를 채우고, 고를 수 있는 단위를 그 재료에 흔한 단위로 줄인다."""
+    state = st.session_state
+    name = state.shop_name.strip()
+    if not name:
+        state.shop_units = classifier.common_units(None)
+        return
+    with st.spinner(f"'{name}' 단위 추천 중..."):
+        info = known_info(name)
+    state.shop_units = classifier.common_units(info["category"], info["unit"])
+    state.shop_unit = info["unit"]
 
 
 def on_shop_add_click():
@@ -142,7 +150,9 @@ with st.container(border=True):
     col_name, col_qty, col_unit, col_btn = st.columns([3, 1.5, 1.2, 1])
     col_name.text_input("이름", key="shop_name", on_change=on_shop_name_change, placeholder="예: 두부")
     col_qty.number_input("수량", min_value=0.1, step=1.0, format="%g", key="shop_quantity")
-    col_unit.selectbox("단위", fridge_store.UNITS, key="shop_unit")
+    if st.session_state.shop_unit not in st.session_state.shop_units:
+        st.session_state.shop_unit = st.session_state.shop_units[0]
+    col_unit.selectbox("단위", st.session_state.shop_units, key="shop_unit")
     col_btn.write("")  # 버튼을 입력칸 높이에 맞추기 위한 빈 줄
     col_btn.button("담기", key="shop_add", type="primary", on_click=on_shop_add_click)
 
@@ -222,7 +232,7 @@ if bought:
             "넣기": st.column_config.CheckboxColumn("넣기", width="small"),
             "이름": st.column_config.TextColumn("이름", disabled=True),
             "수량": st.column_config.NumberColumn("수량", min_value=0.1, step=1.0, format="%g"),
-            "단위": st.column_config.SelectboxColumn("단위", options=fridge_store.UNITS, required=True),
+            "단위": st.column_config.TextColumn("단위", disabled=True),  # 장보기에 담은 단위 그대로
             "유통기한": st.column_config.DateColumn("유통기한", format="YYYY-MM-DD"),
         },
     )

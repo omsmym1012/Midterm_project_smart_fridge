@@ -268,9 +268,15 @@ def add_dialog():
     with col_date:
         st.date_input("유통기한", key="add_expiry", disabled=no_expiry)
 
+    # 단위는 그 재료에 흔히 쓰는 것만 고를 수 있다. (종류별 목록 + 추천 단위 + 냉장고에 있던 단위)
+    suggested_unit = (state.add_suggested or {}).get("unit")
+    existing_units = (state.add_existing or {}).get("units", [])
+    unit_options = classifier.common_units(state.add_category, *existing_units, suggested_unit)
+    if state.add_unit not in unit_options:
+        state.add_unit = unit_options[0]
     col_qty, col_unit = st.columns([2, 1])
     col_qty.number_input("수량", min_value=0.1, step=1.0, format="%g", key="add_quantity")
-    col_unit.selectbox("단위", store.UNITS, key="add_unit", on_change=on_unit_change)
+    col_unit.selectbox("단위", unit_options, key="add_unit", on_change=on_unit_change)
 
     st.button("추가", type="primary", on_click=on_add_click)
 
