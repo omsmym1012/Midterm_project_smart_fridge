@@ -98,12 +98,20 @@ def expiry_badge(expiry_str):
     return f":{color}-badge[{icon} {store.d_day_label(expiry_str)}]"
 
 
+WEEK_DAYS = 7  # 맨 위 요약의 "7일 이내" (3일 이내와 겹치지 않게 4~7일 남은 재료)
+
+
 def summary_badges():
-    """맨 위 한 줄 요약: 상태별 재료 개수 배지"""
+    """맨 위 한 줄 요약: 기한 지남 / 3일 이내 / 7일 이내 재료 개수 배지 (여유·기한 없음은 표시하지 않음)"""
     groups = store.expiry_summary(items)
-    return " ".join(
-        f":{color}-badge[{icon} {title} {len(groups[status])}]"
-        for status, (color, icon, title) in STATUS_STYLE.items()
+    week = [
+        item for item in groups[store.STATUS_OK]
+        if store.days_left(store.earliest_batch(item)["expiry"]) <= WEEK_DAYS
+    ]
+    return (
+        f":red-badge[🔴 기한 지남 {len(groups[store.STATUS_EXPIRED])}] "
+        f":orange-badge[🟠 {store.SOON_DAYS}일 이내 {len(groups[store.STATUS_SOON])}] "
+        f":yellow-badge[🟡 {WEEK_DAYS}일 이내 {len(week)}]"
     )
 
 
