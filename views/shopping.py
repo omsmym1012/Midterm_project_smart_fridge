@@ -1,7 +1,7 @@
 """🛒 장보기 페이지
 
 1) 다시 사기 탭: 소진·폐기한 재료, 기한 지난/임박 재료를 한 줄씩 보여 주고, 고른 것만 한 번에 담기 / 안 살래요
-2) 장바구니 탭   : 직접 추가(이름·수량·단위) + 장바구니 목록(산 재료 체크, 삭제)
+2) 장바구니 탭   : 장바구니 목록(산 재료 체크, 수량 수정, 삭제) + 직접 추가(이름·수량·단위)
 3) 냉장고 넣기 : 체크한 항목의 수량·유통기한을 확인하고 한 번에 냉장고에 넣기
 """
 
@@ -49,10 +49,17 @@ if "flash" in st.session_state:
 
 
 # ---------------------------------------------------------------
-# 탭 3개: 다시 사기 / 장바구니(직접 추가 + 리스트) / 냉장고 넣기
+# 탭 3개: 다시 사기 / 장바구니(리스트 + 직접 추가) / 냉장고 넣기
 # key를 주면 버튼을 눌러 화면이 다시 그려져도 보던 탭이 유지된다.
 # ---------------------------------------------------------------
-tab_rebuy, tab_cart, tab_put = st.tabs(["🔁 다시 사기", "🛒 장바구니", "🧊 냉장고 넣기"], key="shop_tab")
+TAB_PUT = "🧊 냉장고 넣기"
+# 팝업에서 [예]를 누르면 냉장고 넣기 탭으로 넘긴다. (탭을 그리기 전에 바꿔야 해서 여기서 처리)
+if st.session_state.pop("goto_put", False):
+    st.session_state.shop_tab = TAB_PUT
+# on_change="rerun": 고른 탭을 st.session_state.shop_tab으로 읽고 바꿀 수 있게 한다.
+tab_rebuy, tab_cart, tab_put = st.tabs(
+    ["🔁 다시 사기", "🛒 장바구니", TAB_PUT], key="shop_tab", on_change="rerun"
+)
 
 with tab_rebuy:
     # ---------------------------------------------------------------
@@ -102,7 +109,104 @@ with tab_rebuy:
 
 with tab_cart:
     # ---------------------------------------------------------------
-    # 2) 직접 추가
+    # 2) 장바구니 (장보기 리스트)
+    # ---------------------------------------------------------------
+    st.subheader("🛒 장바구니")
+
+    # 마트에서 이 재료를 찾을 수 있는 코너 (재료 종류로 정한다)
+    AISLE_BY_CATEGORY = {
+        "채소": "채소 코너", "과일": "과일 코너", "육류": "정육 코너", "해산물": "수산 코너",
+        "유제품·계란": "유제품·계란 코너", "곡류·면": "쌀·면 코너", "양념·소스": "양념·소스 코너",
+        "가공·냉동식품": "가공식품 코너", "밀키트·간편식": "간편식 코너", "음료": "음료 코너",
+    }
+
+
+    def aisle(name):
+        """재료 이름으로 마트 코너를 알려 준다. 냉동 보관 재료는 냉동식품 코너, 모르면 빈 글자."""
+        if "빵" in name:  # 식빵·모닝빵 등은 종류가 곡류라도 빵 코너에 있다.
+            return "빵 코너"
+        info = known_info(name)
+        if info["category"] == "가공·냉동식품" and info["storage"] == "냉동":
+            return "냉동식품 코너"
+        return AISLE_BY_CATEGORY.get(info["category"], "")
+
+
+    def on_check_change(item_id):
+        """체크박스를 누르면 바로 저장한다."""
+        checked = st.session_state[f"shop_chk_{item_id}"]
+        shop.set_checked(data, item_id, checked)
+        # 방금 체크해서 장바구니 재료를 전부 샀다면 냉장고에 넣을지 묻는다.
+        if checked and all(item["checked"] for item in data["items"]):
+            st.session_state.put_ask = True
+
+
+    def on_qty_change(item_id):
+        """수량을 고치면 바로 저장한다. (냉장고 넣기 탭에도 이 수량이 나온다)"""
+        shop.set_quantity(data, item_id, st.session_state[f"shop_qty_{item_id}"])
+        st.session_state.pop(f"buy_qty_{item_id}", None)  # 냉장고 넣기 탭 수량칸도 새 수량으로 다시 채운다
+
+
+    if not data["items"]:
+        st.info("장바구니가 비어 있어요.")
+    else:
+        # 진행도: 몇 개 중 몇 개를 샀는지 막대로 보여 준다.
+        done = len(shop.checked_items(data))
+        total = len(data["items"])
+        st.progress(done / total, text=f"{total}개 중 {done}개 샀어요")
+
+    # 장바구니 체크박스를 [삭제] 버튼과 비슷한 크기로 키운다.
+    # key가 shop_chk_로 시작하는 체크박스에만 st-key-shop_chk_... 이름표가 붙어서 그것만 고른다.
+    st.html(
+        """<style>
+        [class*="st-key-shop_chk_"] label > div:first-of-type {
+            width: 2rem; height: 2rem; border-radius: 0.4rem;
+        }
+        [class*="st-key-shop_chk_"] label > div:first-of-type svg {
+            width: 1.3rem; height: 1.3rem;
+        }
+        </style>"""
+    )
+
+    # 안 산 재료를 위에, 산(체크한) 재료를 아래에 둔다. 두 묶음 사이에는 구분선
+    todo = [item for item in data["items"] if not item["checked"]]
+    got = [item for item in data["items"] if item["checked"]]
+    for item in todo + got:
+        if got and item is got[0] and todo:
+            st.divider()
+        # 한 줄: 이름 | 마트 코너 | 수량 입력칸 | 단위(고정) | 체크박스(산 재료면 v) | 삭제
+        col_name, col_aisle, col_qty, col_unit, col_chk, col_del = st.columns(
+            [1.4, 1.4, 1.6, 0.7, 0.5, 1], vertical_alignment="center"
+        )
+        where = aisle(item["name"])
+        if where:
+            col_aisle.caption(f"📍 {where}")
+        # 산 재료는 이름에 줄을 긋고 흐리게 보여 준다.
+        if item["checked"]:
+            col_name.markdown(f":gray[~~{item['name']}~~]")
+        else:
+            col_name.markdown(f"**{item['name']}**")
+        col_qty.number_input(
+            f"{item['name']} 수량", min_value=0.1, value=float(item["quantity"]), step=1.0, format="%g",
+            key=f"shop_qty_{item['id']}", on_change=on_qty_change, args=(item["id"],),
+            label_visibility="collapsed",
+        )
+        col_unit.write(item["unit"])
+        # 체크박스 글자는 숨기고 네모 칸만 보여 준다. (label_visibility="collapsed")
+        col_chk.checkbox(
+            f"{item['name']} 샀어요",
+            value=item["checked"],
+            key=f"shop_chk_{item['id']}",
+            on_change=on_check_change,
+            args=(item["id"],),
+            label_visibility="collapsed",
+        )
+        if col_del.button("삭제", key=f"shop_del_{item['id']}"):
+            shop.remove_items(data, [item["id"]])
+            finish(True, f"'{item['name']}'을(를) 장바구니에서 뺐어요.")
+
+
+    # ---------------------------------------------------------------
+    # 3) 직접 추가
     # 이름을 입력하고 Enter를 누르면 추천 단위를 채워 준다. (냉장고 추가와 같은 방식)
     # ---------------------------------------------------------------
     st.subheader("✏️ 직접 추가")
@@ -150,86 +254,6 @@ with tab_cart:
         col_unit.selectbox("단위", st.session_state.shop_units, key="shop_unit")
         col_btn.write("")  # 버튼을 입력칸 높이에 맞추기 위한 빈 줄
         col_btn.button("담기", key="shop_add", type="primary", on_click=on_shop_add_click)
-
-
-    # ---------------------------------------------------------------
-    # 3) 장바구니 (장보기 리스트)
-    # ---------------------------------------------------------------
-    st.subheader("🛒 장바구니")
-
-    # 마트에서 이 재료를 찾을 수 있는 코너 (재료 종류로 정한다)
-    AISLE_BY_CATEGORY = {
-        "채소": "채소 코너", "과일": "과일 코너", "육류": "정육 코너", "해산물": "수산 코너",
-        "유제품·계란": "유제품·계란 코너", "곡류·면": "쌀·면 코너", "양념·소스": "양념·소스 코너",
-        "가공·냉동식품": "가공식품 코너", "밀키트·간편식": "간편식 코너", "음료": "음료 코너",
-    }
-
-
-    def aisle(name):
-        """재료 이름으로 마트 코너를 알려 준다. 냉동 보관 재료는 냉동식품 코너, 모르면 빈 글자."""
-        if "빵" in name:  # 식빵·모닝빵 등은 종류가 곡류라도 빵 코너에 있다.
-            return "빵 코너"
-        info = known_info(name)
-        if info["category"] == "가공·냉동식품" and info["storage"] == "냉동":
-            return "냉동식품 코너"
-        return AISLE_BY_CATEGORY.get(info["category"], "")
-
-
-    def on_check_change(item_id):
-        """체크박스를 누르면 바로 저장한다."""
-        shop.set_checked(data, item_id, st.session_state[f"shop_chk_{item_id}"])
-
-
-    def on_qty_change(item_id):
-        """수량을 고치면 바로 저장한다. (냉장고 넣기 탭에도 이 수량이 나온다)"""
-        shop.set_quantity(data, item_id, st.session_state[f"shop_qty_{item_id}"])
-        st.session_state.pop(f"buy_qty_{item_id}", None)  # 냉장고 넣기 탭 수량칸도 새 수량으로 다시 채운다
-
-
-    if not data["items"]:
-        st.info("장바구니가 비어 있어요.")
-    else:
-        # 진행도: 몇 개 중 몇 개를 샀는지 막대로 보여 준다.
-        done = len(shop.checked_items(data))
-        total = len(data["items"])
-        st.progress(done / total, text=f"{total}개 중 {done}개 샀어요")
-
-    # 안 산 재료를 위에, 산(체크한) 재료를 아래에 둔다. 두 묶음 사이에는 구분선
-    todo = [item for item in data["items"] if not item["checked"]]
-    got = [item for item in data["items"] if item["checked"]]
-    for item in todo + got:
-        if got and item is got[0] and todo:
-            st.divider()
-        # 한 줄: 이름 | 마트 코너 | 수량 입력칸 | 단위(고정) | 체크박스(산 재료면 v) | 삭제
-        col_name, col_aisle, col_qty, col_unit, col_chk, col_del = st.columns(
-            [1.4, 1.4, 1.6, 0.7, 0.5, 1], vertical_alignment="center"
-        )
-        where = aisle(item["name"])
-        if where:
-            col_aisle.caption(f"📍 {where}")
-        # 산 재료는 이름에 줄을 긋고 흐리게 보여 준다.
-        if item["checked"]:
-            col_name.markdown(f":gray[~~{item['name']}~~]")
-        else:
-            col_name.markdown(f"**{item['name']}**")
-        col_qty.number_input(
-            f"{item['name']} 수량", min_value=0.1, value=float(item["quantity"]), step=1.0, format="%g",
-            key=f"shop_qty_{item['id']}", on_change=on_qty_change, args=(item["id"],),
-            label_visibility="collapsed",
-        )
-        col_unit.write(item["unit"])
-        # 체크박스 글자는 숨기고 네모 칸만 보여 준다. (label_visibility="collapsed")
-        col_chk.checkbox(
-            f"{item['name']} 샀어요",
-            value=item["checked"],
-            key=f"shop_chk_{item['id']}",
-            on_change=on_check_change,
-            args=(item["id"],),
-            label_visibility="collapsed",
-        )
-        if col_del.button("삭제", key=f"shop_del_{item['id']}"):
-            shop.remove_items(data, [item["id"]])
-            finish(True, f"'{item['name']}'을(를) 장바구니에서 뺐어요.")
 
 
 with tab_put:
@@ -292,3 +316,28 @@ with tab_put:
             if separate:
                 message += f"({', '.join(separate)}은(는) 단위가 달라서 따로 추가됐어요.)"
             finish(True, message.strip())
+
+
+# ---------------------------------------------------------------
+# 장바구니를 전부 체크하면 뜨는 팝업: [예] → 냉장고 넣기 탭으로
+# 열린 상태를 put_ask에 기억해 두고, 화면을 다시 그릴 때마다 팝업을 다시 띄운다.
+# ---------------------------------------------------------------
+def close_put_ask():
+    st.session_state.pop("put_ask", None)
+
+
+@st.dialog("냉장고에 넣을까요?", on_dismiss=close_put_ask)
+def put_ask_dialog():
+    st.write("장바구니의 재료를 모두 샀어요. 냉장고에 넣을까요?")
+    col_yes, col_no = st.columns(2)
+    if col_yes.button("예", type="primary", key="put_yes", width="stretch"):
+        close_put_ask()
+        st.session_state.goto_put = True
+        st.rerun()  # 팝업을 닫고 화면 전체를 다시 그린다.
+    if col_no.button("아니요", key="put_no", width="stretch"):
+        close_put_ask()
+        st.rerun()
+
+
+if st.session_state.get("put_ask"):
+    put_ask_dialog()
