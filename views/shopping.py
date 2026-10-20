@@ -157,6 +157,24 @@ with tab_cart:
     # ---------------------------------------------------------------
     st.subheader("🛒 장바구니")
 
+    # 마트에서 이 재료를 찾을 수 있는 코너 (재료 종류로 정한다)
+    AISLE_BY_CATEGORY = {
+        "채소": "채소 코너", "과일": "과일 코너", "육류": "정육 코너", "해산물": "수산 코너",
+        "유제품·계란": "유제품·계란 코너", "곡류·면": "쌀·면 코너", "양념·소스": "양념·소스 코너",
+        "가공·냉동식품": "가공식품 코너", "밀키트·간편식": "간편식 코너", "음료": "음료 코너",
+    }
+
+
+    def aisle(name):
+        """재료 이름으로 마트 코너를 알려 준다. 냉동 보관 재료는 냉동식품 코너, 모르면 빈 글자."""
+        if "빵" in name:  # 식빵·모닝빵 등은 종류가 곡류라도 빵 코너에 있다.
+            return "빵 코너"
+        info = known_info(name)
+        if info["category"] == "가공·냉동식품" and info["storage"] == "냉동":
+            return "냉동식품 코너"
+        return AISLE_BY_CATEGORY.get(info["category"], "")
+
+
     def on_check_change(item_id):
         """체크박스를 누르면 바로 저장한다."""
         shop.set_checked(data, item_id, st.session_state[f"shop_chk_{item_id}"])
@@ -170,13 +188,30 @@ with tab_cart:
 
     if not data["items"]:
         st.info("장바구니가 비어 있어요.")
+    else:
+        # 진행도: 몇 개 중 몇 개를 샀는지 막대로 보여 준다.
+        done = len(shop.checked_items(data))
+        total = len(data["items"])
+        st.progress(done / total, text=f"{total}개 중 {done}개 샀어요")
 
-    for item in data["items"]:
-        # 한 줄: 이름 | 수량 입력칸 | 단위(고정) | 체크박스(산 재료면 v) | 삭제
-        col_name, col_qty, col_unit, col_chk, col_del = st.columns(
-            [2.2, 1.6, 0.7, 0.5, 1], vertical_alignment="center"
+    # 안 산 재료를 위에, 산(체크한) 재료를 아래에 둔다. 두 묶음 사이에는 구분선
+    todo = [item for item in data["items"] if not item["checked"]]
+    got = [item for item in data["items"] if item["checked"]]
+    for item in todo + got:
+        if got and item is got[0] and todo:
+            st.divider()
+        # 한 줄: 이름 | 마트 코너 | 수량 입력칸 | 단위(고정) | 체크박스(산 재료면 v) | 삭제
+        col_name, col_aisle, col_qty, col_unit, col_chk, col_del = st.columns(
+            [1.4, 1.4, 1.6, 0.7, 0.5, 1], vertical_alignment="center"
         )
-        col_name.markdown(f"**{item['name']}**")
+        where = aisle(item["name"])
+        if where:
+            col_aisle.caption(f"📍 {where}")
+        # 산 재료는 이름에 줄을 긋고 흐리게 보여 준다.
+        if item["checked"]:
+            col_name.markdown(f":gray[~~{item['name']}~~]")
+        else:
+            col_name.markdown(f"**{item['name']}**")
         col_qty.number_input(
             f"{item['name']} 수량", min_value=0.1, value=float(item["quantity"]), step=1.0, format="%g",
             key=f"shop_qty_{item['id']}", on_change=on_qty_change, args=(item["id"],),
