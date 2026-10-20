@@ -7,6 +7,7 @@ HTML·CSS·JavaScript를 직접 넣은 작은 컴포넌트를 만든다.
 - 오른쪽: 아직 칸에 넣지 않은 "새 재료"
 - 재료를 마우스(또는 손가락)로 잡으면 추천 칸 색이 연하게 바뀌고,
   다른 칸에 놓으면 Python으로 {"item_id", "zone"}을 보낸다. ("move" 이벤트)
+- 끌지 않고 누르기만 하면 재료 id를 보낸다. ("select" 이벤트 → 상세 팝업)
 """
 
 import streamlit as st
@@ -60,7 +61,7 @@ CSS = """
     background: var(--st-background-color, #fff);
     border: 1px solid var(--fb-line);
     border-left: 5px solid var(--fb-status);
-    cursor: grab;
+    cursor: pointer;
     touch-action: none;
     font-size: 0.8rem;
     line-height: 1.25;
@@ -209,7 +210,11 @@ export default function (component) {
             chip.classList.remove("fb-placeholder");
             setRecommend(item.recommend, false);
             dragging = null;
-            if (!ghost) return;
+            if (!ghost) {
+                // 움직이지 않고 손을 뗐으면 "누르기"로 보고 상세 팝업을 연다.
+                if (e.type === "pointerup") setTriggerValue("select", item.id);
+                return;
+            }
             ghost.remove();
 
             const target = e.type === "pointerup" ? zoneAt(e.clientX, e.clientY) : null;
@@ -264,10 +269,11 @@ def _board_data(items):
     return {"zones": store.ZONES, "items": data_items}
 
 
-def fridge_board(items, key, on_move):
+def fridge_board(items, key, on_move, on_select):
     """냉장고 칸 화면을 그린다.
 
-    재료를 다른 칸에 놓으면 on_move가 화면을 다시 그리기 전에 먼저 실행된다.
-    on_move 안에서 st.session_state[key]["move"]로 {"item_id", "zone"}을 읽을 수 있다.
+    재료를 다른 칸에 놓으면 on_move, 누르면 on_select가 화면을 다시 그리기 전에 먼저 실행된다.
+    그 안에서 st.session_state[key]["move"]로 {"item_id", "zone"}을,
+    st.session_state[key]["select"]로 누른 재료 id를 읽을 수 있다.
     """
-    _board(data=_board_data(items), key=key, on_move_change=on_move)
+    _board(data=_board_data(items), key=key, on_move_change=on_move, on_select_change=on_select)
