@@ -157,28 +157,32 @@ with tab_cart:
     # ---------------------------------------------------------------
     st.subheader("🛒 장바구니")
 
-    SOURCE_LABEL = {
-        shop.SOURCE_USED: "소진한 재료",
-        shop.SOURCE_DISCARDED: "폐기한 재료",
-        shop.SOURCE_EXPIRED: "기한 지난 재료",
-        shop.SOURCE_SOON: "기한 임박 재료",
-        shop.SOURCE_MANUAL: "직접 추가",
-        shop.SOURCE_RECIPE: "요리 추천",
-    }
-
-
     def on_check_change(item_id):
         """체크박스를 누르면 바로 저장한다."""
         shop.set_checked(data, item_id, st.session_state[f"shop_chk_{item_id}"])
+
+
+    def on_qty_change(item_id):
+        """수량을 고치면 바로 저장한다. (냉장고 넣기 탭에도 이 수량이 나온다)"""
+        shop.set_quantity(data, item_id, st.session_state[f"shop_qty_{item_id}"])
+        st.session_state.pop(f"buy_qty_{item_id}", None)  # 냉장고 넣기 탭 수량칸도 새 수량으로 다시 채운다
 
 
     if not data["items"]:
         st.info("장바구니가 비어 있어요.")
 
     for item in data["items"]:
-        # 한 줄: 이름·수량 | 체크박스(산 재료면 v) | 출처 | 삭제
-        col_name, col_chk, col_src, col_del = st.columns([3, 0.7, 2, 1], vertical_alignment="center")
-        col_name.markdown(f"**{item['name']}** {fridge_store.format_quantity(item['quantity'], item['unit'])}")
+        # 한 줄: 이름 | 수량 입력칸 | 단위(고정) | 체크박스(산 재료면 v) | 삭제
+        col_name, col_qty, col_unit, col_chk, col_del = st.columns(
+            [2.2, 1.6, 0.7, 0.5, 1], vertical_alignment="center"
+        )
+        col_name.markdown(f"**{item['name']}**")
+        col_qty.number_input(
+            f"{item['name']} 수량", min_value=0.1, value=float(item["quantity"]), step=1.0, format="%g",
+            key=f"shop_qty_{item['id']}", on_change=on_qty_change, args=(item["id"],),
+            label_visibility="collapsed",
+        )
+        col_unit.write(item["unit"])
         # 체크박스 글자는 숨기고 네모 칸만 보여 준다. (label_visibility="collapsed")
         col_chk.checkbox(
             f"{item['name']} 샀어요",
@@ -188,7 +192,6 @@ with tab_cart:
             args=(item["id"],),
             label_visibility="collapsed",
         )
-        col_src.caption(SOURCE_LABEL.get(item["source"], ""))
         if col_del.button("삭제", key=f"shop_del_{item['id']}"):
             shop.remove_items(data, [item["id"]])
             finish(True, f"'{item['name']}'을(를) 장바구니에서 뺐어요.")

@@ -98,6 +98,14 @@ def set_checked(data, item_id, checked):
     save(data)
 
 
+def set_quantity(data, item_id, quantity):
+    """장바구니 항목의 수량을 바꾼다. (계획보다 더 사거나 덜 샀을 때)"""
+    for item in data["items"]:
+        if item["id"] == item_id:
+            item["quantity"] = float(quantity)
+    save(data)
+
+
 def remove_items(data, item_ids):
     """장보기 항목들을 지운다."""
     data["items"] = [item for item in data["items"] if item["id"] not in item_ids]
