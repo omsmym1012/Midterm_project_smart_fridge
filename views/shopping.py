@@ -141,9 +141,8 @@ with tab_cart:
 
 
     def on_qty_change(item_id):
-        """수량을 고치면 바로 저장한다. (냉장고 넣기 탭에도 이 수량이 나온다)"""
+        """수량을 고치면 바로 저장한다. (냉장고 넣기 탭에 이 수량으로 들어간다)"""
         shop.set_quantity(data, item_id, st.session_state[f"shop_qty_{item_id}"])
-        st.session_state.pop(f"buy_qty_{item_id}", None)  # 냉장고 넣기 탭 수량칸도 새 수량으로 다시 채운다
 
 
     if not data["items"]:
@@ -266,32 +265,27 @@ with tab_put:
     else:
         st.caption("유통기한을 비워 두면 '기한 없음'으로 들어가요. 넣지 않을 재료는 체크를 풀어 주세요.")
 
-        # 한 줄씩: [넣기] 이름 | 수량 입력칸 | 단위(고정) | 유통기한 날짜칸
+        # 한 줄씩: [넣기] 이름·수량(장바구니에서 정한 그대로) | 유통기한 날짜칸
         rows = []
         for item in bought:
-            col_chk, col_name, col_qty, col_unit, col_date = st.columns(
-                [0.5, 1.8, 1.6, 0.7, 2], vertical_alignment="center"
-            )
+            col_chk, col_name, col_date = st.columns([0.5, 3, 2.5], vertical_alignment="center")
             put = col_chk.checkbox(
                 f"{item['name']} 넣기", value=True, key=f"buy_chk_{item['id']}", label_visibility="collapsed"
             )
-            col_name.markdown(f"**{item['name']}**")
-            quantity = col_qty.number_input(
-                f"{item['name']} 수량", min_value=0.1, value=float(item["quantity"]), step=1.0, format="%g",
-                key=f"buy_qty_{item['id']}", label_visibility="collapsed",
+            col_name.markdown(
+                f"**{item['name']}** {fridge_store.format_quantity(item['quantity'], item['unit'])}"
             )
-            col_unit.write(item["unit"])  # 장보기에 담은 단위 그대로
             # value=None: 처음에는 날짜를 비워 둔다. (비워 두면 기한 없음)
             expiry = col_date.date_input(
                 f"{item['name']} 유통기한", value=None, key=f"buy_exp_{item['id']}",
                 label_visibility="collapsed", format="YYYY-MM-DD",
             )
-            rows.append((item, put, quantity, expiry))
+            rows.append((item, put, expiry))
 
         if st.button("완료", type="primary", key="shop_done"):
             added, separate, skipped = [], [], []
             with st.spinner("냉장고에 넣는 중..."):
-                for item, put, quantity, expiry in rows:
+                for item, put, expiry in rows:
                     if not put:
                         skipped.append(item["name"])
                         continue
@@ -302,7 +296,7 @@ with tab_put:
                     ):
                         separate.append(name)
                     fridge_store.add_item(
-                        fridge_items, name, expiry, float(quantity), unit,
+                        fridge_items, name, expiry, float(item["quantity"]), unit,
                         known_info(name), allow_new_unit=True,
                     )
                     added.append(name)
