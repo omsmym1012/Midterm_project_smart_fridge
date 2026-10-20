@@ -11,17 +11,10 @@
 
 import json
 import os
-import re
-import time
 from pathlib import Path
 
-import requests
-from dotenv import load_dotenv
-
+import ai_client
 from fridge_store import UNITS, ZONES
-
-# .env 파일의 OPENROUTER_API_KEY를 환경 변수로 읽어 온다. (내 컴퓨터에서 실행할 때)
-load_dotenv()
 
 CATEGORIES = [
     "채소", "과일", "육류", "해산물", "유제품·계란",
@@ -33,19 +26,7 @@ DEFAULT_CATEGORY = "기타"
 DEFAULT_STORAGE = "냉장"
 DEFAULT_UNIT = "개"
 
-# AI 설정
-# 무료 모델은 사용자가 몰리면 잠깐씩 막힌다(429 오류).
-# 그래서 첫 번째 모델이 막히면 다음 모델로 다시 시도하도록 여러 개를 적어 둔다.
-# Gemma가 막히는 일이 많아서, 응답이 잘 오는 NVIDIA Nemotron 무료 모델을 뒤에 둔다.
-AI_MODELS = [
-    "google/gemma-4-31b-it:free",
-    "nvidia/nemotron-3-ultra-550b-a55b:free",
-    "nvidia/nemotron-3-super-120b-a12b:free",
-    "google/gemma-4-26b-a4b-it:free",
-]
-AI_URL = "https://openrouter.ai/api/v1/chat/completions"
-AI_TIMEOUT = 20        # 초. 모델 하나가 이 시간 안에 답이 없으면 다음 모델로
-AI_TOTAL_TIMEOUT = 40  # 초. 모든 모델을 합쳐 이 시간이 지나면 분류 실패로 처리 (너무 오래 기다리지 않게)
+# AI 호출(모델 목록·시간 제한)은 ai_client.py에서 함께 관리한다.
 
 # 사용자 수정·AI 결과를 기억해 두는 파일 (.gitignore의 data/*.json에 포함되어 커밋되지 않음)
 CACHE_FILE = Path(__file__).parent / "data" / "classify_cache.json"
@@ -423,26 +404,8 @@ def _from_builtin(name):
 # ---------------------------------------------------------------
 # AI에게 물어보기
 # ---------------------------------------------------------------
-def _get_api_key():
-    """API 키를 찾는다. 내 컴퓨터에서는 .env, Streamlit Cloud에서는 Secrets 설정에서 읽는다."""
-    key = os.getenv("OPENROUTER_API_KEY")
-    if key:
-        return key
-    try:
-        import streamlit as st
-
-        return st.secrets.get("OPENROUTER_API_KEY")
-    except Exception:
-        # Secrets 설정이 아예 없으면 오류가 나므로 조용히 None을 돌려준다.
-        return None
-
-
 def _ask_ai(name):
     """AI에게 분류를 요청한다. 성공하면 (종류, 보관, 단위, 팁, 추천 칸), 실패하면 None."""
-    api_key = _get_api_key()
-    if not api_key:
-        return None
-
     prompt = (
         f"식재료 '{name}'을(를) 분류해 주세요.\n"
         f"category(종류)는 다음 중 하나: {', '.join(CATEGORIES)}\n"
@@ -455,47 +418,13 @@ def _ask_ai(name):
         "다른 설명 없이 JSON 한 개만 답하세요. 예:\n"
         '{"category": "채소", "storage": "냉장", "unit": "개", "tip": "키친타월에 싸서 보관하세요.", "zone": "crisper"}'
     )
-    # 모델을 앞에서부터 차례로 시도하고, 처음으로 제대로 답한 결과를 쓴다.
-    # 전체 시간(AI_TOTAL_TIMEOUT)을 넘기면 남은 모델은 건너뛴다.
-    deadline = time.monotonic() + AI_TOTAL_TIMEOUT
-    for model in AI_MODELS:
-        remaining = deadline - time.monotonic()
-        if remaining <= 1:
-            break
-        result = _ask_one_model(api_key, model, prompt, timeout=min(AI_TIMEOUT, remaining))
-        if result:
-            return result
-    return None
+    return ai_client.ask_json(prompt, validate=_check_ai_answer)
 
 
-def _ask_one_model(api_key, model, prompt, timeout=AI_TIMEOUT):
-    """모델 하나에 요청한다. 성공하면 (종류, 보관, 단위, 팁, 추천 칸), 실패하면 None."""
-    try:
-        response = requests.post(
-            AI_URL,
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0,
-            },
-            timeout=timeout,
-        )
-        response.raise_for_status()
-        text = response.json()["choices"][0]["message"]["content"]
-    except (requests.RequestException, KeyError, IndexError, ValueError):
-        # 인터넷 문제, 무료 모델 호출 한도 초과(429), 이상한 응답 등은 모두 실패로 처리
+def _check_ai_answer(data):
+    """AI 답을 확인한다. 쓸 수 있으면 (종류, 보관, 단위, 팁, 추천 칸), 아니면 None (다음 모델로)."""
+    if not isinstance(data, dict):
         return None
-
-    # AI가 ```json ... ``` 처럼 감싸서 답해도 { } 부분만 꺼내서 읽는다.
-    found = re.search(r"\{.*\}", text, re.DOTALL)
-    if not found:
-        return None
-    try:
-        data = json.loads(found.group())
-    except json.JSONDecodeError:
-        return None
-
     category, storage, unit = data.get("category"), data.get("storage"), data.get("unit")
     # 종류·보관이 정해진 선택지 밖이면 믿지 않는다. 단위만 이상하면 기본 단위로 바꾼다.
     if category not in CATEGORIES or storage not in STORAGES:

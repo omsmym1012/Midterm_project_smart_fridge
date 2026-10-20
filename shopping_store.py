@@ -9,7 +9,7 @@
       "handled": ["used:<재료 id>", "expired:<묶음 id>", "soon:<묶음 id>", ...]
     }
 
-- source: 어디서 왔는지 ("used" 다 쓴 재료 / "expired" 기한 지난 재료 / "soon" 기한 임박 재료 / "manual" 직접 추가)
+- source: 어디서 왔는지 ("used" 다 쓴 재료 / "expired" 기한 지난 재료 / "soon" 기한 임박 재료 / "manual" 직접 추가 / "recipe" 요리 추천)
 - checked: "샀어요" 체크 여부
 - handled: 추천 목록에서 이미 [담기]나 [안 살래요]를 누른 항목.
            다시 추천하지 않도록 기억해 둔다.
@@ -30,6 +30,7 @@ SOURCE_USED = "used"
 SOURCE_EXPIRED = "expired"
 SOURCE_SOON = "soon"
 SOURCE_MANUAL = "manual"
+SOURCE_RECIPE = "recipe"  # 요리 추천의 부족한 재료
 
 
 # ---------------------------------------------------------------

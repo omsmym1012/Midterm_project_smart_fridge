@@ -156,6 +156,7 @@ SOURCE_LABEL = {
     shop.SOURCE_EXPIRED: "기한 지난 재료",
     shop.SOURCE_SOON: "기한 임박 재료",
     shop.SOURCE_MANUAL: "직접 추가",
+    shop.SOURCE_RECIPE: "요리 추천",
 }
 
 
