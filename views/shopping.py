@@ -1,6 +1,6 @@
 """🛒 장보기 페이지
 
-1) 다시 살까요?  : 소진·폐기한 재료, 기한 지난/임박 재료 추천 → 수량 정하고 [담기] / [안 살래요]
+1) 다시 살까요?  : 소진·폐기한 재료, 기한 지난/임박 재료를 표로 보여 주고, 고른 것만 한 번에 담기 / 안 살래요
 2) 직접 추가     : 이름·수량·단위를 입력해서 담기
 3) 장보기 리스트 : 이름 오른쪽 체크박스로 구매 체크, 삭제
 4) 산 재료 정리  : 체크한 항목을 표에서 확인하고 한 번에 냉장고에 넣기
@@ -55,31 +55,55 @@ if "flash" in st.session_state:
 # ---------------------------------------------------------------
 # 1) 다시 살까요? (추천 목록)
 # ---------------------------------------------------------------
-st.subheader("🔁 다시 살까요?")
 candidates = shop.candidates(fridge_items, data)
+st.subheader(f"🔁 다시 살까요? ({len(candidates)})" if candidates else "🔁 다시 살까요?")
 
 if not candidates:
     st.caption("추천할 재료가 없어요.")
+else:
+    # 후보를 표 한 줄씩 보여 주고, 고른 것만 한 번에 담거나 뺀다.
+    # 표의 "담을 수량"은 고칠 수 있고, 단위는 냉장고에 있던 단위로 고정이다.
+    cand_table = pd.DataFrame(
+        {
+            "선택": [False] * len(candidates),
+            "이름": [c["name"] for c in candidates],
+            "이유": [c["detail"] for c in candidates],
+            "수량": [1.0] * len(candidates),
+            "단위": [c["unit"] for c in candidates],
+        }
+    )
+    # 후보가 바뀌면 표를 새로 만들도록 key에 후보 목록을 반영한다.
+    cand_key = "cand_editor_" + hashlib.md5("".join(c["keys"][0] for c in candidates).encode()).hexdigest()[:8]
+    cand_edited = st.data_editor(
+        cand_table,
+        key=cand_key,
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "선택": st.column_config.CheckboxColumn("선택", width="small"),
+            "이름": st.column_config.TextColumn("이름", disabled=True),
+            "이유": st.column_config.TextColumn("이유", disabled=True),
+            "수량": st.column_config.NumberColumn("수량", min_value=0.1, step=1.0, format="%g", width="small"),
+            "단위": st.column_config.TextColumn("단위", disabled=True, width="small"),
+        },
+    )
+    chosen = [(c, row) for c, (_, row) in zip(candidates, cand_edited.iterrows()) if row["선택"]]
 
-for candidate in candidates:
-    with st.container(border=True):
-        col_name, col_qty, col_add, col_skip = st.columns([3, 1.6, 1, 1.3], vertical_alignment="bottom")
-        col_name.markdown(f"**{candidate['name']}**")
-        col_name.caption(candidate["detail"])
-        key = candidate["keys"][0]  # 버튼 key를 구분하기 위한 값
-        # 담을 수량 (단위는 냉장고에 있던 단위 그대로)
-        quantity = col_qty.number_input(
-            f"수량 ({candidate['unit']})", min_value=0.1, value=1.0, step=1.0, format="%g", key=f"cand_qty_{key}"
-        )
-
-        if col_add.button("담기", key=f"cand_add_{key}"):
-            ok, message = shop.add_item(data, candidate["name"], quantity, candidate["unit"], candidate["kind"])
+    col_add, col_skip, _ = st.columns([1.3, 1.6, 2])
+    if col_add.button("고른 재료 담기", type="primary", key="cand_add", disabled=not chosen):
+        added, already = [], []
+        for candidate, row in chosen:
+            ok, _ = shop.add_item(data, candidate["name"], float(row["수량"]), candidate["unit"], candidate["kind"])
             shop.mark_handled(data, candidate["keys"])
-            finish(ok, message)
-
-        if col_skip.button("안 살래요", key=f"cand_skip_{key}"):
+            (added if ok else already).append(candidate["name"])
+        message = f"🛒 담았어요: {', '.join(added)}" if added else ""
+        if already:
+            message += f" (이미 있음: {', '.join(already)})"
+        finish(bool(added), message.strip())
+    if col_skip.button("고른 재료 안 살래요", key="cand_skip", disabled=not chosen):
+        for candidate, _ in chosen:
             shop.mark_handled(data, candidate["keys"])
-            finish(True, f"'{candidate['name']}'은(는) 추천에서 뺐어요.")
+        finish(True, f"추천에서 뺐어요: {', '.join(c['name'] for c, _ in chosen)}")
 
 
 # ---------------------------------------------------------------
